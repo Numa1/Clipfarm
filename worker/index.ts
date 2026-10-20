@@ -4,7 +4,7 @@ import { sources, type Job } from "@/server/db/schema";
 import { claimNextJob, failJob, finishJob, requeueStaleJobs, setJobProgress } from "@/server/jobs";
 import { ingest } from "./handlers/ingest";
 import { findMoments } from "./handlers/moments";
-import { reframe } from "./handlers/reframe";
+import { reframe, reframeSetupProblem } from "./handlers/reframe";
 import { render } from "./handlers/render";
 import { transcribe } from "./handlers/transcribe";
 
@@ -17,7 +17,7 @@ const handlers: Record<Job["type"], Handler> = {
   ingest: (p: { sourceId: string }, prog) => ingest(db, p, prog),
   transcribe: (p: { sourceId: string }, prog) => transcribe(db, p, prog),
   moments: (p: { sourceId: string }) => findMoments(db, p),
-  reframe: (p: { projectId: string }, prog) => reframe(db, p, prog),
+  reframe: (p: { projectId: string; itemIds?: string[] }, prog) => reframe(db, p, prog),
   render: (p: { projectId: string }, prog) => render(db, p, prog),
 };
 
@@ -47,6 +47,8 @@ async function runJob(job: Job) {
 
 async function loop() {
   requeueStaleJobs(db);
+  const reframeProblem = reframeSetupProblem();
+  if (reframeProblem) console.warn(`⚠ Cadrage auto indisponible — ${reframeProblem}`);
   console.log("Clipfarm worker ready — waiting for jobs…");
   for (;;) {
     let job: Job | null = null;

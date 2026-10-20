@@ -24,6 +24,17 @@ export function keyframeAt(kfs: CropKeyframe[], t: number): CropKeyframe {
   };
 }
 
+/** Content window of a split shot at source time `t`, following its horizontal pans. */
+export function contentAt(shot: Extract<Shot, { layout: "split" }>, t: number): Rect {
+  if (!shot.pan?.length) return shot.content;
+  const kf = keyframeAt(
+    shot.pan.map((p) => ({ t: p.t, x: p.x, y: 0.5, zoom: 1 })),
+    t,
+  );
+  const w = shot.content.w;
+  return { ...shot.content, x: clamp(kf.x - w / 2, 0, 1 - w) };
+}
+
 /** Crop window at source time `t`, linearly interpolated between keyframes. */
 export function cropAt(crop: Crop, t: number): CropKeyframe {
   return keyframeAt(crop.mode === "center" ? [] : crop.keyframes, t);

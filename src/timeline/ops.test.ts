@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cropAt, cropTransform, fitTransform, regionTransform, shotAt, withShotLayout } from "./crop";
+import { contentAt, cropAt, cropTransform, fitTransform, regionTransform, shotAt, withShotLayout } from "./crop";
 import { timelineFromSegment } from "./factory";
 import {
   addItem,
@@ -149,6 +149,23 @@ describe("crop", () => {
     expect(b.shots?.[1].layout).toBe("fit");
     // A clip without shots becomes a single-shot auto crop.
     expect(withShotLayout({ mode: "center", keyframes: [] }, 3, "fit").shots).toEqual([{ t: 0, layout: "fit" }]);
+  });
+
+  it("pans the content window of a split shot, staying inside the frame", () => {
+    const shot = {
+      t: 0,
+      layout: "split" as const,
+      cam: { x: 0, y: 0.6, w: 0.3, h: 0.4 },
+      content: { x: 0.3, y: 0, w: 0.5, h: 1 },
+      ratio: 0.4,
+      pan: [
+        { t: 0, x: 0.55 },
+        { t: 2, x: 0.95 },
+      ],
+    };
+    expect(contentAt(shot, 1).x).toBeCloseTo(0.5); // center 0.75 → left edge 0.5
+    expect(contentAt(shot, 5).x).toBeCloseTo(0.5); // center 0.95 clamped: right edge stays at 1
+    expect(contentAt({ ...shot, pan: undefined }, 1)).toBe(shot.content);
   });
 
   it("letterboxes the whole frame", () => {

@@ -11,7 +11,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:py": "uv run --quiet --with pytest --with 'opencv-python-headless>=4.9,<5' --with 'numpy>=1.26' pytest -q scripts/test_reframe.py",
     "db:generate": "drizzle-kit generate",
+    "setup:all": "pnpm setup:whisper && pnpm setup:models",
     "setup:whisper": "./scripts/setup-whisper.sh",
     "setup:models": "./scripts/setup-models.sh",
     "studio": "remotion studio src/remotion/index.ts"

@@ -16,8 +16,8 @@ type EditorState = {
   pxPerSec: number;
   /** Bumped on every user edit; drives autosave. */
   revision: number;
-  /** An automatic reframe job is running in the worker. */
-  reframing: boolean;
+  /** Id of the automatic reframe job running in the worker (autosave pauses meanwhile). */
+  reframeJobId: string | null;
 
   load: (tl: Timeline) => void;
   /** Apply an edit (pure op) and record it in history. */
@@ -33,7 +33,7 @@ type EditorState = {
   select: (id: string | null) => void;
   setPlayhead: (t: number) => void;
   setZoom: (pxPerSec: number) => void;
-  setReframing: (on: boolean) => void;
+  setReframeJob: (id: string | null) => void;
 };
 
 let gestureBase: Timeline | null = null;
@@ -46,7 +46,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   playhead: 0,
   pxPerSec: 40,
   revision: 0,
-  reframing: false,
+  reframeJobId: null,
 
   load: (tl) => set({ timeline: tl, past: [], future: [], selectedId: null, revision: 0 }),
 
@@ -93,5 +93,5 @@ export const useEditor = create<EditorState>((set, get) => ({
   select: (id) => set({ selectedId: id }),
   setPlayhead: (t) => set({ playhead: Math.max(0, t) }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.min(400, Math.max(5, pxPerSec)) }),
-  setReframing: (on) => set({ reframing: on }),
+  setReframeJob: (id) => set({ reframeJobId: id }),
 }));

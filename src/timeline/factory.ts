@@ -37,9 +37,9 @@ export function timelineFromSegment(opts: {
     sourceIn: opts.sourceIn,
     sourceOut: opts.sourceOut,
     volume: 1,
-    crop: opts.cropKeyframes?.length
-      ? { mode: "auto", keyframes: opts.cropKeyframes }
-      : { mode: "center", keyframes: [] },
+    // Auto with nothing computed yet renders centered until the reframe job fills it in;
+    // "center" is reserved for an explicit user choice the worker must not overwrite.
+    crop: { mode: "auto", keyframes: opts.cropKeyframes ?? [] },
   });
   if (opts.hook) {
     tl.tracks[1].items.push({

@@ -1,5 +1,5 @@
 import { AbsoluteFill, Audio, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
-import { type Box, cropTransform, fitTransform, keyframeAt, regionTransform, shotAt } from "@/timeline/crop";
+import { type Box, contentAt, cropTransform, fitTransform, keyframeAt, regionTransform, shotAt } from "@/timeline/crop";
 import type { Asset, AudioItem, TextItem, Timeline, VideoItem } from "@/timeline/schema";
 
 /**
@@ -73,10 +73,15 @@ function VideoLayer({
   const W = timeline.width;
   const H = timeline.height;
 
-  // Two stable video slots so a layout switch is a cut, not a remount (no reload/stutter):
   // "main" carries the audio, "aux" is the facecam (split) or the blurred backdrop (fit).
-  // The aux slot only exists for clips that have a split/fit shot.
-  const needsAux = item.crop.mode === "auto" && !!item.crop.shots?.some((s) => s.layout !== "crop");
+  // In the player, both slots stay mounted for clips that have split/fit shots, so a layout switch
+  // is a cut, not a <video> remount (reload/stutter). Rendering is frame-exact, so there the aux
+  // slot only exists on the shots that use it (no decoding it for nothing).
+  const usesAux = (s: { layout: string }) => s.layout !== "crop";
+  const needsAux =
+    media.quality === "full"
+      ? usesAux(shot)
+      : item.crop.mode === "auto" && !!item.crop.shots?.some(usesAux);
   let main: Slot;
   let aux: Slot | null = null;
   if (shot.layout === "split") {
@@ -87,11 +92,12 @@ function VideoLayer({
     };
     main = {
       frame: { left: 0, top: camH, width: W, height: H - camH },
-      box: regionTransform(shot.content, src, { width: W, height: H - camH }),
+      box: regionTransform(contentAt(shot, sourceTime), src, { width: W, height: H - camH }),
     };
   } else if (shot.layout === "fit") {
     const full = { left: 0, top: 0, width: W, height: H };
-    aux = { frame: full, box: cropTransform({ t: 0, x: 0.5, y: 0.5, zoom: 1 }, src, full), filter: "blur(40px) brightness(0.55)" };
+    // Slightly oversized so the blur's soft edges fall outside the frame (no dark halo).
+    aux = { frame: full, box: cropTransform({ t: 0, x: 0.5, y: 0.5, zoom: 1.15 }, src, full), filter: "blur(40px) brightness(0.55)" };
     main = { frame: full, box: fitTransform(src, full) };
   } else {
     const full = { left: 0, top: 0, width: W, height: H };
@@ -112,6 +118,8 @@ function VideoLayer({
         trimBefore={toFrames(item.sourceIn, timeline.fps)}
         volume={audible && !muted ? item.volume : 0}
         muted={!audible}
+        // Both slots must stay lip-synced with each other (the default tolerance is 0.45 s each).
+        acceptableTimeShiftInSeconds={needsAux ? 0.04 : undefined}
         pauseWhenBuffering
         style={{
           position: "absolute",

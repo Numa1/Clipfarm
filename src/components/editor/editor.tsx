@@ -23,8 +23,9 @@ export function Editor() {
   const { id } = useParams<{ id: string }>();
   const playerRef = useRef<PlayerRef>(null);
   const [name, setName] = useState("");
-  const reframing = useEditor((s) => s.reframing);
-  const setReframing = useEditor((s) => s.setReframing);
+  const reframeJobId = useEditor((s) => s.reframeJobId);
+  const setReframeJob = useEditor((s) => s.setReframeJob);
+  const reframing = !!reframeJobId;
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [lastExport, setLastExport] = useState<string | null>(null);
   const { timeline, load, undo, redo, past, future, revision } = useEditor();
@@ -36,28 +37,36 @@ export function Editor() {
         load(parseTimeline(p.timeline));
         setName(p.name);
         setLastExport(p.lastExportPath);
-        setReframing(p.activeJobs.some((j) => j.type === "reframe"));
+        setReframeJob(p.activeJobs.find((j) => j.type === "reframe")?.id ?? null);
       })
       .catch((e) => toast.error(String(e)));
-  }, [id, load, setReframing]);
+  }, [id, load, setReframeJob]);
 
-  // While auto-reframe runs in the worker, poll and merge its crops into the local timeline.
+  // While auto-reframe runs in the worker, poll its job, then merge its shots into the local timeline.
   useEffect(() => {
-    if (!reframing) return;
+    if (!reframeJobId) return;
     const t = setInterval(async () => {
+      const job = await fetchJson<Job>(`/api/jobs/${reframeJobId}`).catch(() => null);
+      if (!job || job.status === "queued" || job.status === "running") return;
+      if (job.status === "error") {
+        setReframeJob(null);
+        toast.error(`Recadrage auto échoué : ${job.error ?? "erreur inconnue"}`);
+        return;
+      }
       const p = await fetchJson<ProjectResponse>(`/api/projects/${id}`);
-      if (p.activeJobs.some((j) => j.type === "reframe")) return;
-      setReframing(false);
       const remote = parseTimeline(p.timeline);
-      useEditor.getState().replaceSilently((tl) => mergeCrops(tl, remote));
+      // A history entry (undo reverts the framing explicitly) that also resumes autosave.
+      useEditor.getState().apply((tl) => mergeCrops(tl, remote));
+      setReframeJob(null);
       toast.success("Recadrage auto appliqué");
     }, 1500);
     return () => clearInterval(t);
-  }, [id, reframing, setReframing]);
+  }, [id, reframeJobId, setReframeJob]);
 
-  // Autosave (debounced) on every edit.
+  // Autosave (debounced) on every edit. Paused while the worker reframes: a save landing between
+  // its write and our merge would erase the computed shots; pending edits are saved after the merge.
   useEffect(() => {
-    if (!revision || !timeline) return;
+    if (!revision || !timeline || reframing) return;
     const t = setTimeout(() => {
       fetch(`/api/projects/${id}`, {
         method: "PUT",
@@ -68,7 +77,7 @@ export function Editor() {
       });
     }, 600);
     return () => clearTimeout(t);
-  }, [id, revision, timeline]);
+  }, [id, revision, timeline, reframing]);
 
   // Export progress polling.
   useEffect(() => {
@@ -170,7 +179,7 @@ export function Editor() {
             <DownloadIcon /> MP4
           </Button>
         )}
-        <Button size="sm" onClick={startExport} disabled={!!exporting}>
+        <Button size="sm" onClick={startExport} disabled={!!exporting || reframing}>
           {exporting ? (
             <>
               <Loader2Icon className="animate-spin" /> {Math.round((exportJob?.progress ?? 0) * 100)} %
@@ -192,7 +201,7 @@ export function Editor() {
   );
 }
 
-/** Take crops computed by the worker for clips that still exist locally and weren't set manually. */
+/** Take shots computed by the worker for clips that still exist locally and are still in auto mode. */
 function mergeCrops(local: Timeline, remote: Timeline): Timeline {
   const crops = new Map(
     remote.tracks.flatMap((t) => t.items).flatMap((i) => (i.type === "video" ? [[i.id, i.crop] as const] : [])),
@@ -201,11 +210,13 @@ function mergeCrops(local: Timeline, remote: Timeline): Timeline {
     ...local,
     tracks: local.tracks.map((t) => ({
       ...t,
-      items: t.items.map((i) =>
-        i.type === "video" && i.crop.mode !== "manual" && crops.get(i.id)?.mode === "auto"
-          ? { ...i, crop: crops.get(i.id)! }
-          : i,
-      ),
+      items: t.items.map((i) => {
+        const remote = crops.get(i.id);
+        // Only clips still in auto locally (a clip switched to center/manual meanwhile keeps it).
+        return i.type === "video" && i.crop.mode === "auto" && remote?.mode === "auto" && remote.shots?.length
+          ? { ...i, crop: remote }
+          : i;
+      }),
     })),
   };
 }

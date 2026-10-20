@@ -124,7 +124,7 @@ const LAYOUT_LABELS: Record<ShotLayout, string> = {
 
 function VideoFields({ item }: { item: VideoItem }) {
   const { id: projectId } = useParams<{ id: string }>();
-  const reframing = useEditor((s) => s.reframing);
+  const reframing = useEditor((s) => !!s.reframeJobId);
   const playhead = useEditor((s) => s.playhead);
   // Source time under the playhead, clamped to the clip.
   const sourceTime = Math.min(item.sourceOut, Math.max(item.sourceIn, item.sourceIn + playhead - item.start));
@@ -138,17 +138,21 @@ function VideoFields({ item }: { item: VideoItem }) {
       crop: { mode: "manual", keyframes: [{ ...current, t: item.sourceIn, ...patch }] },
     });
 
+  /** Recompute this clip only: back to auto locally (so the result merges in), save, queue the job. */
   const recompute = async () => {
     const st = useEditor.getState();
-    // Manual clips are left alone by the worker: put this one back to auto first, then save.
-    if (item.crop.mode === "manual") st.apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "auto", keyframes: [] } }));
+    st.apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "auto", keyframes: [] } }));
     await fetch(`/api/projects/${projectId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ timeline: useEditor.getState().timeline }),
     });
-    const r = await fetch(`/api/projects/${projectId}/reframe`, { method: "POST" });
-    if (r.ok) st.setReframing(true);
+    const r = await fetch(`/api/projects/${projectId}/reframe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ itemIds: [item.id] }),
+    });
+    if (r.ok) st.setReframeJob(((await r.json()) as { id: string }).id);
     else toast.error(`Recadrage impossible : ${await r.text()}`);
   };
 

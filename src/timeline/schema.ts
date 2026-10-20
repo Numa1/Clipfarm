@@ -52,6 +52,8 @@ export const shotSchema = z.discriminatedUnion("layout", [
     content: rectSchema,
     /** Share of the output height given to the facecam. */
     ratio: z.number().min(0.2).max(0.7).default(0.4),
+    /** Horizontal pans of the content window (its center x over SOURCE time). */
+    pan: z.array(z.object({ t: seconds, x: z.number().min(0).max(1) })).optional(),
   }),
   /** Whole source frame letterboxed over a blurred copy of itself. */
   z.object({ t: seconds, layout: z.literal("fit") }),
@@ -77,7 +79,7 @@ export const videoItemSchema = z.object({
   sourceIn: seconds,
   sourceOut: seconds,
   volume: z.number().min(0).max(2).default(1),
-  crop: cropSchema.default({ mode: "center", keyframes: [] }),
+  crop: cropSchema.default({ mode: "auto", keyframes: [] }),
 });
 
 export const audioItemSchema = z.object({
