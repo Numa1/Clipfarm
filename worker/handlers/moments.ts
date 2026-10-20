@@ -21,6 +21,18 @@ const momentsSchema = z.object({
     .max(15),
 });
 
+/**
+ * When the worker is started from inside a Claude Code session (e.g. a desktop-app terminal),
+ * it inherits that session's CLAUDE_* / ANTHROPIC_* variables — CLAUDE_CODE_SIMPLE disables
+ * OAuth/keychain auth and the CLI reports "Not logged in". Run the CLI with a clean env so it
+ * uses the user's own subscription login.
+ */
+function cliEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC_)/.test(k)),
+  ) as NodeJS.ProcessEnv;
+}
+
 const JSON_SCHEMA = JSON.stringify(z.toJSONSchema(momentsSchema));
 
 const SYSTEM = `Tu es un monteur expert en contenus courts (TikTok, YouTube Shorts) en français.
@@ -30,7 +42,8 @@ Trouve les 5 à 10 meilleurs passages autonomes de 30 à 60 secondes pour un sho
 - une idée complète, compréhensible sans contexte, avec une chute ;
 - commence et termine sur des limites de phrase.
 Pour chaque passage : start/end en secondes (pris dans les horodatages), "hook" = texte d'accroche
-à afficher à l'écran (max 8 mots, percutant), "reason" = pourquoi ça marche (1 phrase), "score" 0-100.`;
+à afficher à l'écran (max 8 mots, percutant), "reason" = pourquoi ça marche (1 phrase), "score" 0-100.
+Réponds uniquement avec l'objet JSON { "moments": [...] }, sans texte autour.`;
 
 /** Group words into lines "[123.4] text" (~every sentence or 12 s) to keep the prompt compact. */
 export function formatTranscript(words: Word[]): string {
@@ -49,6 +62,26 @@ export function formatTranscript(words: Word[]): string {
   return lines.join("\n");
 }
 
+/** Pull the moments JSON out of a free-text answer (```json fences or the outermost {...}). */
+export function extractJson(text: string): unknown {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
+  const candidate = fenced?.[1] ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  return JSON.parse(candidate);
+}
+
+async function askClaude(prompt: string): Promise<z.infer<typeof momentsSchema>> {
+  const out = await run(
+    CLAUDE_BIN,
+    ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
+      "--system-prompt", SYSTEM, "--json-schema", JSON_SCHEMA],
+    { env: cliEnv(), input: prompt },
+  );
+  const envelope = JSON.parse(out) as { structured_output?: unknown; result?: string; is_error?: boolean };
+  if (envelope.is_error) throw new Error(`claude: ${envelope.result}`);
+  // On long inputs the model sometimes answers in prose instead of the structured output.
+  return momentsSchema.parse(envelope.structured_output ?? extractJson(envelope.result ?? ""));
+}
+
 /** Highlight detection through the local Claude Code CLI (uses the user's Claude subscription). */
 export async function findMoments(db: DB, payload: { sourceId: string }) {
   const source = db.select().from(sources).where(eq(sources.id, payload.sourceId)).get();
@@ -56,16 +89,8 @@ export async function findMoments(db: DB, payload: { sourceId: string }) {
   if (!source || !tr) throw new Error("transcript missing");
   const duration = source.durationSec ?? Infinity;
 
-  const out = await run(
-    CLAUDE_BIN,
-    ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
-      "--system-prompt", SYSTEM, "--json-schema", JSON_SCHEMA],
-    { input: `Transcription (secondes entre crochets) :\n\n${formatTranscript(tr.json.words)}` },
-  );
-
-  const envelope = JSON.parse(out) as { structured_output?: unknown; result?: string; is_error?: boolean };
-  if (envelope.is_error) throw new Error(`claude: ${envelope.result}`);
-  const data = momentsSchema.parse(envelope.structured_output ?? JSON.parse(envelope.result ?? "{}"));
+  const prompt = `Transcription (secondes entre crochets) :\n\n${formatTranscript(tr.json.words)}`;
+  const data = await askClaude(prompt).catch(() => askClaude(prompt)); // one retry
 
   const rows = data.moments
     .map((m) => ({ ...m, start: Math.max(0, m.start), end: Math.min(duration, m.end) }))

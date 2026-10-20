@@ -4,10 +4,10 @@ import { spawn } from "node:child_process";
 export function run(
   cmd: string,
   args: string[],
-  opts: { input?: string; onStderr?: (line: string) => void; cwd?: string } = {},
+  opts: { input?: string; onStderr?: (line: string) => void; cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     child.stdout.on("data", (d) => (out += d));
