@@ -36,6 +36,8 @@ export function ShortComposition({ timeline, media }: ShortProps) {
         if (track.hidden && track.kind !== "audio") return null;
         return track.items.map((item) => {
           const from = toFrames(item.start, fps);
+          // Captions are not rendered yet.
+          if (item.type === "caption") return null;
           const duration =
             item.type === "text"
               ? toFrames(item.duration, fps)

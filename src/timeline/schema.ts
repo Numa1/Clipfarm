@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { migrateTimeline } from "./migrate";
 
 /**
  * Timeline = single source of truth for a short.
@@ -6,7 +7,7 @@ import { z } from "zod";
  * and (from V3) by agents. All times are in seconds.
  */
 
-export const TIMELINE_VERSION = 1;
+export const TIMELINE_VERSION = 2;
 
 const id = z.string().min(1);
 const seconds = z.number().nonnegative();
@@ -118,22 +119,51 @@ export const textItemSchema = z.object({
   }),
 });
 
+export const captionWordSchema = z.object({ w: z.string(), start: seconds, end: seconds });
+
+/** Word-timed subtitles (schema only for now: the composition ignores them). */
+export const captionItemSchema = z.object({
+  ...baseItem,
+  type: z.literal("caption"),
+  duration: z.number().positive(),
+  words: z.array(captionWordSchema),
+  styleId: z.string().optional(),
+});
+
 export const itemSchema = z.discriminatedUnion("type", [
   videoItemSchema,
   audioItemSchema,
   textItemSchema,
+  captionItemSchema,
 ]);
 
 export const trackSchema = z.object({
   id,
-  kind: z.enum(["video", "audio", "text"]),
+  kind: z.enum(["video", "audio", "text", "caption"]),
   name: z.string(),
   muted: z.boolean().default(false),
   hidden: z.boolean().default(false),
   items: z.array(itemSchema),
 });
 
-export const timelineSchema = z.object({
+export const hookSchema = z.object({
+  text: z.string(),
+  kind: z.string().optional(),
+  score: z.number().optional(),
+});
+
+const optionalRef = z.string().nullable().optional();
+
+/** Known keys are typed; any other key is kept untouched. */
+export const metaSchema = z.looseObject({
+  sourceId: optionalRef,
+  momentId: optionalRef,
+  styleId: optionalRef,
+  niche: optionalRef,
+  hooks: z.array(hookSchema).optional(),
+});
+
+const timelineObjectSchema = z.object({
   version: z.literal(TIMELINE_VERSION),
   fps: z.number().int().positive().default(30),
   width: z.number().int().positive().default(1080),
@@ -141,8 +171,45 @@ export const timelineSchema = z.object({
   assets: z.record(z.string(), assetSchema),
   /** Order = stacking order for visuals: index 0 is drawn first (bottom). */
   tracks: z.array(trackSchema),
-  /** Free metadata (source, moment, preset in V2, agent notes in V3…). */
-  meta: z.record(z.string(), z.unknown()).default({}),
+  /** Typed known keys (source, moment, style, niche, hooks) plus free metadata. */
+  meta: metaSchema.default({}),
+});
+
+/** Accepts a v1 or v2 timeline and yields a v2, after checking that references hold together. */
+export const timelineSchema = z.preprocess(migrateTimeline, timelineObjectSchema).superRefine((tl, ctx) => {
+  const seen = new Set<string>();
+  tl.tracks.forEach((track, ti) => {
+    track.items.forEach((item, ii) => {
+      const path = ["tracks", ti, "items", ii];
+      if (item.type !== track.kind) {
+        ctx.addIssue({
+          code: "custom",
+          path: [...path, "type"],
+          message: `L’élément « ${item.type} » ne peut pas être placé sur la piste « ${track.kind} » (${track.id})`,
+        });
+      }
+      if (seen.has(item.id)) {
+        ctx.addIssue({ code: "custom", path: [...path, "id"], message: `Identifiant d’élément dupliqué : ${item.id}` });
+      }
+      seen.add(item.id);
+      if (item.type === "video" || item.type === "audio") {
+        if (!tl.assets[item.assetId]) {
+          ctx.addIssue({
+            code: "custom",
+            path: [...path, "assetId"],
+            message: `L’asset « ${item.assetId} » n’existe pas dans assets`,
+          });
+        }
+        if (item.sourceOut <= item.sourceIn) {
+          ctx.addIssue({
+            code: "custom",
+            path: [...path, "sourceOut"],
+            message: `sourceOut (${item.sourceOut}) doit être supérieur à sourceIn (${item.sourceIn})`,
+          });
+        }
+      }
+    });
+  });
 });
 
 export type Asset = z.infer<typeof assetSchema>;
@@ -153,6 +220,7 @@ export type Shot = z.infer<typeof shotSchema>;
 export type ShotLayout = Shot["layout"];
 export type VideoItem = z.infer<typeof videoItemSchema>;
 export type AudioItem = z.infer<typeof audioItemSchema>;
+export type CaptionItem = z.infer<typeof captionItemSchema>;
 export type TextItem = z.infer<typeof textItemSchema>;
 export type Item = z.infer<typeof itemSchema>;
 export type Track = z.infer<typeof trackSchema>;
