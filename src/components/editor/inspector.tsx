@@ -1,8 +1,10 @@
 "use client";
 
-import { Ban, ArrowsRotateRight, TrashBin } from "@gravity-ui/icons";
-import { Segment } from "@heroui-pro/react";
+import { Ban, ArrowsRotateRight, Filmstrip, HandPointUp, MusicNote, Text, TrashBin } from "@gravity-ui/icons";
+import { EmptyState, Segment } from "@heroui-pro/react";
 import {
+  Chip,
+  cn,
   ColorSwatchPicker,
   Kbd,
   Label,
@@ -14,7 +16,7 @@ import {
   toast,
 } from "@heroui/react";
 import { useParams } from "next/navigation";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import { formatTime } from "@/lib/format";
 import { cropAt, shotAt, withShotLayout } from "@/timeline/crop";
 import { findItem, itemDuration, removeItem, updateItem } from "@/timeline/ops";
@@ -67,9 +69,12 @@ function NumberSlider({
       step={step}
       onChange={(v) => onChange(Array.isArray(v) ? v[0] : v)}
       onChangeEnd={commit}
+      className="group/slider"
     >
       <Label className="text-xs font-medium text-muted">{label}</Label>
-      <Slider.Output className="text-xs tabular-nums">{display}</Slider.Output>
+      <Slider.Output className="origin-right text-xs tabular-nums opacity-70 transition-[opacity,transform] duration-150 ease-smooth group-has-[[data-dragging=true]]/slider:scale-105 group-has-[[data-dragging=true]]/slider:opacity-100">
+        {display}
+      </Slider.Output>
       <Slider.Track>
         <Slider.Fill />
         <Slider.Thumb />
@@ -78,51 +83,99 @@ function NumberSlider({
   );
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["Espace", "Lecture / pause"],
-  ["S", "Couper à la tête de lecture"],
-  ["Suppr", "Supprimer la sélection"],
-  ["⌘Z", "Annuler"],
-  ["⇧⌘Z", "Rétablir"],
-  ["⌘ molette", "Zoom de la timeline"],
+type Shortcut = { keys: (KbdKey | string)[]; action: string };
+type KbdKey = "command" | "shift" | "space" | "delete";
+const ABBR = new Set<string>(["command", "shift", "space", "delete"]);
+
+const SHORTCUTS: Shortcut[] = [
+  { keys: ["Espace"], action: "Lecture / pause" },
+  { keys: ["S"], action: "Couper à la tête de lecture" },
+  { keys: ["delete"], action: "Supprimer la sélection" },
+  { keys: ["command", "Z"], action: "Annuler" },
+  { keys: ["shift", "command", "Z"], action: "Rétablir" },
+  { keys: ["command", "Molette"], action: "Zoom de la timeline" },
 ];
+
+function Keys({ keys }: { keys: Shortcut["keys"] }) {
+  return (
+    <Kbd className="text-[11px]">
+      {keys.map((k) =>
+        ABBR.has(k) ? <Kbd.Abbr key={k} keyValue={k as KbdKey} /> : <Kbd.Content key={k}>{k}</Kbd.Content>,
+      )}
+    </Kbd>
+  );
+}
+
+type Icon = ComponentType<SVGProps<SVGSVGElement>>;
+/** Same icons and hues as the timeline tracks. */
+const ITEM_META: Record<Item["type"], { label: string; icon: Icon; tone: string }> = {
+  video: { label: "Clip vidéo", icon: Filmstrip, tone: "bg-track-video/15 text-track-video" },
+  text: { label: "Texte", icon: Text, tone: "bg-track-text/15 text-track-text" },
+  audio: { label: "Son", icon: MusicNote, tone: "bg-track-audio/15 text-track-audio" },
+};
+
+function NoSelection() {
+  return (
+    <div className="flex animate-fade-in-up flex-col gap-6">
+      <EmptyState size="sm" className="px-0">
+        <EmptyState.Header>
+          <EmptyState.Media variant="icon">
+            <HandPointUp />
+          </EmptyState.Media>
+          <EmptyState.Title>Aucune sélection</EmptyState.Title>
+          <EmptyState.Description>Clique un élément de la timeline pour régler son cadrage, son texte ou son volume.</EmptyState.Description>
+        </EmptyState.Header>
+      </EmptyState>
+      <section className="flex flex-col gap-1">
+        <h3 className="px-1 pb-1 text-xs font-medium text-muted">Raccourcis</h3>
+        <dl className="flex flex-col">
+          {SHORTCUTS.map(({ keys, action }, i) => (
+            <div
+              key={action}
+              className="flex animate-fade-in-up items-center justify-between gap-3 rounded-md px-1 py-1.5 text-xs"
+              style={{ animationDelay: `${80 + i * 30}ms` }}
+            >
+              <dt className="text-muted">{action}</dt>
+              <dd>
+                <Keys keys={keys} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    </div>
+  );
+}
 
 export function Inspector() {
   const selectedId = useEditor((s) => s.selectedId);
   const item = useEditor((s) => (s.selectedId && s.timeline ? findItem(s.timeline, s.selectedId)?.item : null));
+  const meta = item ? ITEM_META[item.type] : null;
 
   return (
-    <aside className="hidden w-72 shrink-0 flex-col gap-6 overflow-y-auto border-l border-border p-4 lg:flex">
-      {!item || !selectedId ? (
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-muted">Sélectionne un élément de la timeline pour le modifier.</p>
-          <dl className="flex flex-col gap-2.5">
-            {SHORTCUTS.map(([key, action]) => (
-              <div key={key} className="flex items-center justify-between gap-3 text-xs">
-                <dt className="text-muted">{action}</dt>
-                <dd>
-                  <Kbd>
-                    <Kbd.Content>{key}</Kbd.Content>
-                  </Kbd>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </div>
+    <aside className="hidden w-72 shrink-0 flex-col overflow-y-auto border-l border-border p-4 lg:flex">
+      {!item || !selectedId || !meta ? (
+        <NoSelection />
       ) : (
-        <>
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex flex-col gap-0.5">
-              <h3 className="text-sm font-semibold">
-                {item.type === "video" ? "Clip vidéo" : item.type === "audio" ? "Audio" : "Texte"}
-              </h3>
-              <p className="font-mono text-xs text-muted tabular-nums">
-                {formatTime(item.start)} · {formatTime(itemDuration(item))}
+        // Keyed by item: switching selection replays a short entrance instead of morphing fields in place.
+        <div key={selectedId} className="flex animate-fade-in-up flex-col gap-6 [animation-duration:240ms]">
+          <div className="flex items-center gap-3">
+            <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg animate-scale-in", meta.tone)}>
+              <meta.icon className="size-4" />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <h3 className="text-sm font-semibold">{meta.label}</h3>
+              <p className="flex items-center gap-1.5 text-xs text-muted">
+                <span className="font-mono tabular-nums">{formatTime(item.start)}</span>
+                <span aria-hidden className="text-muted/50">·</span>
+                <span className="font-mono tabular-nums">{formatTime(itemDuration(item))}</span>
               </p>
             </div>
             <IconAction
               label="Supprimer"
               shortcut="Suppr"
+              placement="left"
+              className="hover:text-danger"
               onPress={() => {
                 const st = useEditor.getState();
                 st.apply((tl) => removeItem(tl, item.id));
@@ -136,7 +189,7 @@ export function Inspector() {
           {item.type === "video" && <VideoFields item={item} />}
           {item.type === "audio" && <AudioFields item={item} />}
           {item.type === "text" && <TextFields item={item} />}
-        </>
+        </div>
       )}
     </aside>
   );
@@ -234,9 +287,11 @@ function VideoFields({ item }: { item: VideoItem }) {
           label="Plan sous la tête de lecture"
           aside={
             shots.length ? (
-              <span className="text-xs text-muted tabular-nums">
-                {shots.indexOf(shot) + 1} / {shots.length}
-              </span>
+              <Chip size="sm" variant="soft" className="tabular-nums">
+                <Chip.Label>
+                  Plan {shots.indexOf(shot) + 1} / {shots.length}
+                </Chip.Label>
+              </Chip>
             ) : undefined
           }
         >
@@ -257,7 +312,9 @@ function VideoFields({ item }: { item: VideoItem }) {
               </Segment.Item>
             ))}
           </Segment>
-          <p className="text-xs text-muted">{LAYOUT_HINTS[shot.layout]}</p>
+          <p key={shot.layout} className="animate-fade-in text-xs text-muted">
+            {LAYOUT_HINTS[shot.layout]}
+          </p>
         </Field>
       )}
       {item.crop.mode === "manual" && (

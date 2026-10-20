@@ -2,13 +2,16 @@
 
 import type { PlayerRef } from "@remotion/player";
 import { ArrowDownToLine, ArrowLeft, ArrowUturnCcwLeft, ArrowUturnCwRight, StopFill } from "@gravity-ui/icons";
-import { Button, buttonVariants, Chip, Separator, Spinner, Toolbar, toast } from "@heroui/react";
+import { TextShimmer } from "@heroui-pro/react";
+import { buttonVariants, Chip, Separator, Spinner, Toolbar, toast } from "@heroui/react";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchJson } from "@/lib/format";
 import type { Job, Project } from "@/server/db/schema";
 import { itemEnd, removeItem, splitItem } from "@/timeline/ops";
 import { parseTimeline, type Timeline } from "@/timeline/schema";
+import { ExportButton, ProjectTitle, SaveIndicator, type SaveStatus } from "./editor-chrome";
 import { IconAction } from "./icon-action";
 import { Inspector } from "./inspector";
 import { MediaPanel } from "./media-panel";
@@ -17,6 +20,14 @@ import { useEditor } from "./store";
 import { TimelineView } from "./timeline-view";
 
 type ProjectResponse = Project & { activeJobs: Job[] };
+
+/** Toolbar controls that come and go (job chips, stop buttons, download link): a short pop, ease-snappy. */
+const pop = {
+  initial: { opacity: 0, scale: 0.9 },
+  animate: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.9 },
+  transition: { duration: 0.18, ease: [0.32, 0.72, 0, 1] as const },
+};
 
 export function Editor() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +40,9 @@ export function Editor() {
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [lastExport, setLastExport] = useState<string | null>(null);
   const { timeline, load, undo, redo, past, future, revision } = useEditor();
+  // Presentation only: last revision the server acknowledged, and the export whose success was shown.
+  const [saved, setSaved] = useState({ id, revision: 0, failed: false });
+  const [ackedExportId, setAckedExportId] = useState<string | null>(null);
 
   // Initial load.
   useEffect(() => {
@@ -78,6 +92,10 @@ export function Editor() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ timeline }),
       }).then(async (r) => {
+        setSaved((s) => {
+          const prev = s.id === id ? s.revision : 0;
+          return { id, revision: r.ok ? Math.max(prev, revision) : prev, failed: !r.ok };
+        });
         if (!r.ok) toast.danger("Sauvegarde refusée", { description: await r.text() });
       });
     }, 600);
@@ -98,6 +116,14 @@ export function Editor() {
     }, 1000);
     return () => clearInterval(t);
   }, [exportJob]);
+
+  // Keep the "Exporté" confirmation on the button for a moment, then fall back to the label.
+  const exportDone = exportJob?.status === "done" && ackedExportId !== exportJob.id;
+  useEffect(() => {
+    if (!exportDone || !exportJob) return;
+    const t = setTimeout(() => setAckedExportId(exportJob.id), 1800);
+    return () => clearTimeout(t);
+  }, [exportDone, exportJob]);
 
   const startExport = async () => {
     // Flush pending changes first so the worker renders what's on screen.
@@ -132,8 +158,8 @@ export function Editor() {
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest("input, textarea, [contenteditable=true]")) return;
+      const target = e.target;
+      if (target instanceof Element && target.closest("input, textarea, [contenteditable=true]")) return;
       const mod = e.metaKey || e.ctrlKey;
       if (e.code === "Space") {
         e.preventDefault();
@@ -160,74 +186,91 @@ export function Editor() {
 
   if (!timeline) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 animate-fade-in items-center justify-center [animation-delay:200ms]">
         <Spinner />
       </div>
     );
   }
 
   const exporting = exportJob && (exportJob.status === "queued" || exportJob.status === "running");
+  const ack = saved.id === id ? saved : { revision: 0, failed: false };
+  const saveStatus: SaveStatus = ack.failed ? "error" : revision > ack.revision ? "saving" : "saved";
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
-      <Toolbar aria-label="Projet" className="h-12 shrink-0 gap-2 rounded-none border-b border-border px-3">
-        <IconAction label="Bibliothèque" onPress={() => router.push("/")}>
-          <ArrowLeft />
-        </IconAction>
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</span>
-        {reframing && (
-          <Chip size="sm" variant="soft">
-            <Spinner size="sm" color="current" className="size-3" />
-            <Chip.Label>Recadrage auto</Chip.Label>
-          </Chip>
-        )}
-        {reframing && (
-          <IconAction label="Arrêter le recadrage auto" onPress={() => cancelJob(reframeJobId)}>
-            <StopFill />
+    <MotionConfig reducedMotion="user">
+      <div className="flex h-dvh flex-col overflow-hidden">
+        <Toolbar aria-label="Projet" className="h-12 shrink-0 gap-2 rounded-none border-b border-border px-3">
+          <IconAction label="Bibliothèque" onPress={() => router.push("/")}>
+            <ArrowLeft />
           </IconAction>
-        )}
-        <Separator orientation="vertical" className="h-5" />
-        <IconAction label="Annuler" shortcut="⌘Z" onPress={undo} isDisabled={!past.length}>
-          <ArrowUturnCcwLeft />
-        </IconAction>
-        <IconAction label="Rétablir" shortcut="⇧⌘Z" onPress={redo} isDisabled={!future.length}>
-          <ArrowUturnCwRight />
-        </IconAction>
-        <Separator orientation="vertical" className="h-5" />
-        {lastExport && !exporting && (
-          <a href={`/api/media/${lastExport}`} download className={buttonVariants({ variant: "tertiary", size: "sm" })}>
-            <ArrowDownToLine />
-            MP4
-          </a>
-        )}
-        {exporting && (
-          <IconAction label="Arrêter l’export" onPress={() => cancelJob(exportJob.id)}>
-            <StopFill />
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <ProjectTitle name={name} />
+            {revision > 0 && <SaveIndicator status={saveStatus} />}
+          </div>
+          <AnimatePresence initial={false}>
+            {reframing && (
+              <motion.div key="reframe" className="flex items-center gap-1" {...pop}>
+                <Chip size="sm" variant="soft">
+                  <Spinner size="sm" color="current" className="size-3" />
+                  <Chip.Label>
+                    <TextShimmer>Recadrage auto…</TextShimmer>
+                  </Chip.Label>
+                </Chip>
+                <IconAction label="Arrêter le recadrage auto" onPress={() => cancelJob(reframeJobId)}>
+                  <StopFill />
+                </IconAction>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <Separator orientation="vertical" className="h-5" />
+          <IconAction label="Annuler" shortcut="⌘Z" onPress={undo} isDisabled={!past.length}>
+            <ArrowUturnCcwLeft />
           </IconAction>
-        )}
-        <Button size="sm" onPress={startExport} isDisabled={reframing} isPending={!!exporting}>
-          {exporting ? (
-            <>
-              <Spinner size="sm" color="current" />
-              <span className="tabular-nums">{Math.round((exportJob?.progress ?? 0) * 100)} %</span>
-            </>
-          ) : (
-            "Exporter"
-          )}
-        </Button>
-      </Toolbar>
+          <IconAction label="Rétablir" shortcut="⇧⌘Z" onPress={redo} isDisabled={!future.length}>
+            <ArrowUturnCwRight />
+          </IconAction>
+          <Separator orientation="vertical" className="h-5" />
+          <AnimatePresence initial={false} mode="popLayout">
+            {lastExport && !exporting && (
+              <motion.span key={lastExport} className="flex" {...pop}>
+                <a
+                  href={`/api/media/${lastExport}`}
+                  download
+                  title="Télécharger le dernier export"
+                  className={buttonVariants({ variant: "tertiary", size: "sm" })}
+                >
+                  <ArrowDownToLine />
+                  MP4
+                </a>
+              </motion.span>
+            )}
+            {exporting && (
+              <motion.div key="stop-export" {...pop}>
+                <IconAction label="Arrêter l’export" onPress={() => cancelJob(exportJob.id)}>
+                  <StopFill />
+                </IconAction>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <ExportButton
+            state={exporting ? "exporting" : exportDone ? "done" : "idle"}
+            progress={exportJob?.progress ?? 0}
+            isDisabled={reframing}
+            onPress={startExport}
+          />
+        </Toolbar>
 
-      <div className="flex min-h-0 flex-1">
-        <MediaPanel />
-        <Preview ref={playerRef} />
-        <Inspector />
+        <div className="flex min-h-0 flex-1">
+          <MediaPanel />
+          <Preview ref={playerRef} />
+          <Inspector />
+        </div>
+
+        <TimelineView playerRef={playerRef} onSplit={splitAtPlayhead} />
       </div>
-
-      <TimelineView playerRef={playerRef} onSplit={splitAtPlayhead} />
-    </div>
+    </MotionConfig>
   );
 }
-
 /** Take shots computed by the worker for clips that still exist locally and are still in auto mode. */
 function mergeCrops(local: Timeline, remote: Timeline): Timeline {
   const crops = new Map(
