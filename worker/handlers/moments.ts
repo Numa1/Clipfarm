@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { DB } from "@/server/db";
 import { moments, sources, transcripts, type Word } from "@/server/db/schema";
 import { run } from "../exec";
+import { transcriptLines } from "../voices";
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 
@@ -97,23 +98,20 @@ export function isForeignLine(text: string): boolean {
   return en > 0 && en >= 2 * fr + 1;
 }
 
-/** Group words into lines "[123.4] text" (~every sentence or 12 s) to keep the prompt compact. */
+/**
+ * Lines "[123.4] text" (~every sentence or 12 s) to keep the prompt compact. A line is marked [VO]
+ * when most of its words come from the content (spoken-language detection, see worker/voices.ts),
+ * or, where that is undetermined, when its text reads as English.
+ */
 export function formatTranscript(words: Word[]): string {
-  const lines: string[] = [];
-  let buf: string[] = [];
-  let lineStart = 0;
-  const flush = () => {
-    const text = buf.join(" ");
-    lines.push(`[${lineStart.toFixed(1)}] ${isForeignLine(text) ? "[VO] " : ""}${text}`);
-    buf = [];
-  };
-  for (const w of words) {
-    if (buf.length === 0) lineStart = w.start;
-    buf.push(w.w);
-    if (/[.!?…]$/.test(w.w) || w.end - lineStart > 12) flush();
-  }
-  if (buf.length) flush();
-  return lines.join("\n");
+  return transcriptLines(words)
+    .map((l) => {
+      const text = l.words.map((w) => w.w).join(" ");
+      const known = l.words.filter((w) => w.vo !== undefined);
+      const foreign = known.length ? known.filter((w) => w.vo).length * 2 > known.length : isForeignLine(text);
+      return `[${l.start.toFixed(1)}] ${foreign ? "[VO] " : ""}${text}`;
+    })
+    .join("\n");
 }
 
 /** Hard limits on a moment's length (the prompt asks for 20–45 s; a little tolerance on both sides). */

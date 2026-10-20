@@ -71,8 +71,9 @@ async function main() {
   const src = db.select().from(sources).where(eq(sources.id, sourceId)).get()!;
   check(src.proxyPath && src.audioPath && src.durationSec && src.durationSec > 15, "proxy, audio et durée enregistrés");
 
-  const { words } = await step("Transcription (whisper)", () => transcribe(db, { sourceId }, noop));
+  const { words, contentWords } = await step("Transcription (whisper)", () => transcribe(db, { sourceId }, noop));
   check(words > 20, `${words} mots transcrits`);
+  check(contentWords === 0, "aucune ligne attribuée au contenu : tout est la voix du créateur");
 
   await step("Moments (faux Claude)", () => findMoments(db, { sourceId }));
   const [moment] = db.select().from(moments).where(eq(moments.sourceId, sourceId)).all();

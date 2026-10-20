@@ -6,6 +6,7 @@ import { sources, transcripts, type Word } from "@/server/db/schema";
 import { enqueueJob } from "@/server/jobs";
 import { resolveInLibrary, sourceDir } from "@/server/paths";
 import { run } from "../exec";
+import { detectVoices } from "../voices";
 
 const WHISPER_BIN = process.env.WHISPER_BIN ?? "whisper-cli";
 const WHISPER_MODEL =
@@ -37,7 +38,7 @@ export async function transcribe(
     {
       onStderr: (line) => {
         const m = /progress\s*=\s*(\d+)%/.exec(line);
-        if (m) progress(+m[1] / 100);
+        if (m) progress((0.85 * +m[1]) / 100);
       },
       signal,
     },
@@ -45,9 +46,12 @@ export async function transcribe(
   signal?.throwIfAborted();
 
   const raw = JSON.parse(fs.readFileSync(`${outBase}.json`, "utf8")) as WhisperJson;
-  const words: Word[] = raw.transcription
+  const transcribed: Word[] = raw.transcription
     .map((s) => ({ w: s.text.trim(), start: s.offsets.from / 1000, end: s.offsets.to / 1000 }))
     .filter((w) => w.w.length > 0);
+  // Creator or content (game, clip)? By the language actually spoken, which the forced-French text hides.
+  const words = await detectVoices(audio, transcribed, "fr", { signal, progress: (p) => progress(0.85 + 0.15 * p) });
+  signal?.throwIfAborted();
 
   db.insert(transcripts)
     .values({ sourceId: source.id, language: "fr", json: { language: "fr", words } })
@@ -56,5 +60,5 @@ export async function transcribe(
   db.update(sources).set({ status: "analyzing" }).where(eq(sources.id, source.id)).run();
 
   enqueueJob(db, "moments", { sourceId: source.id });
-  return { words: words.length };
+  return { words: words.length, contentWords: words.filter((w) => w.vo).length };
 }

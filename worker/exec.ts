@@ -25,6 +25,8 @@ export function run(
     const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    // Partial last line of stderr, completed by the next chunk (lines can straddle chunks).
+    let pending = "";
     let killTimer: NodeJS.Timeout | undefined;
     const onAbort = () => {
       child.kill("SIGTERM");
@@ -36,7 +38,10 @@ export function run(
     child.stderr.on("data", (d: Buffer) => {
       const s = d.toString();
       err = (err + s).slice(-8000);
-      if (opts.onStderr) for (const line of s.split(/\r|\n/)) if (line) opts.onStderr(line);
+      if (!opts.onStderr) return;
+      const parts = (pending + s).split(/\r|\n/);
+      pending = parts.pop() ?? "";
+      for (const line of parts) if (line) opts.onStderr(line);
     });
     // stdin may already be closed when the process is killed mid-write.
     child.stdin.on("error", () => {});
@@ -52,6 +57,7 @@ export function run(
     });
     child.on("close", (code) => {
       clearTimeout(killTimer);
+      if (pending && opts.onStderr) opts.onStderr(pending);
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) reject(signal.reason);
       else if (code === 0) resolve(out);

@@ -84,7 +84,14 @@ export const jobs = sqliteTable("jobs", {
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 });
 
-export type Word = { w: string; start: number; end: number };
+export type Word = {
+  w: string;
+  start: number;
+  end: number;
+  /** Who speaks, from the spoken language of the audio (worker/voices.ts): true = a voice of the content
+   *  (game cutscene, watched clip), false = the creator; absent = not determined. */
+  vo?: boolean;
+};
 export type Transcript = { language: string; words: Word[] };
 
 export type Source = typeof sources.$inferSelect;

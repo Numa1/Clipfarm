@@ -6,6 +6,13 @@ describe("run", () => {
     await expect(run("echo", ["hello"])).resolves.toBe("hello\n");
   });
 
+  it("hands stderr to onStderr line by line, even across chunks", async () => {
+    const lines: string[] = [];
+    // The first line is written in two pieces with a pause, so it reaches node in two chunks.
+    await run("sh", ["-c", "printf 'proc' >&2; sleep 0.1; printf 'essing a\\nlast' >&2"], { onStderr: (l) => lines.push(l) });
+    expect(lines).toEqual(["processing a", "last"]);
+  });
+
   it("kills the process when the signal aborts and rejects with its reason", async () => {
     const controller = new AbortController();
     const started = Date.now();
