@@ -1,20 +1,38 @@
 import path from "node:path";
+import { rel, resolveInLibrary } from "./paths";
 
-const TYPES: Record<string, string> = {
+export const VIDEO_TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
   ".mov": "video/quicktime",
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo",
+};
+
+const AUDIO_TYPES: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
   ".m4a": "audio/mp4",
   ".aac": "audio/aac",
   ".ogg": "audio/ogg",
-  ".json": "application/json",
 };
+
+const TYPES = { ...VIDEO_TYPES, ...AUDIO_TYPES };
+
+/** Library folders whose media may be served over HTTP. The DB, its WAL and transcripts never are. */
+const MEDIA_DIRS = new Set(["sources", "exports", "sfx"]);
 
 export function contentTypeFor(file: string): string {
   return TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+}
+
+/** Absolute path of a servable media file (video/audio inside a media folder), or null. */
+export function resolveMedia(relPath: string): string | null {
+  const abs = resolveInLibrary(relPath);
+  if (!abs) return null;
+  const top = rel(abs).split("/")[0];
+  return MEDIA_DIRS.has(top) && path.extname(abs).toLowerCase() in TYPES ? abs : null;
 }
 
 /** Parse a single "bytes=a-b" range header (what browsers and Remotion send). */

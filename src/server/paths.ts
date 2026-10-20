@@ -1,6 +1,6 @@
 import path from "node:path";
 
-/** Root of all heavy files (sources, proxies, audio, exports, sfx). Never served outside /api/media. */
+/** Root of all heavy files (sources, proxies, audio, exports, sfx) and the DB. Only media are served (see resolveMedia). */
 export const LIBRARY_DIR = path.resolve(/*turbopackIgnore: true*/ process.env.CLIPFARM_LIBRARY ?? path.join(process.cwd(), "library"));
 export const DB_PATH = path.join(LIBRARY_DIR, "clipfarm.db");
 

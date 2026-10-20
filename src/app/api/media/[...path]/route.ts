@@ -1,12 +1,11 @@
 import fs from "node:fs";
 import { Readable } from "node:stream";
-import { contentTypeFor, parseRange } from "@/server/media";
-import { resolveInLibrary } from "@/server/paths";
+import { contentTypeFor, parseRange, resolveMedia } from "@/server/media";
 
-/** Serves library files with HTTP Range support (required for <video> seeking). */
+/** Serves library media (videos, audio) with HTTP Range support (required for <video> seeking). */
 export async function GET(request: Request, ctx: RouteContext<"/api/media/[...path]">) {
   const { path: parts } = await ctx.params;
-  const file = resolveInLibrary(parts.map(decodeURIComponent).join("/"));
+  const file = resolveMedia(parts.map(decodeURIComponent).join("/"));
   if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) return new Response("not found", { status: 404 });
 
   const size = fs.statSync(file).size;

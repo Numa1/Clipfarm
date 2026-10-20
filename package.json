@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "worker": "tsx watch --clear-screen=false worker/index.ts",
     "worker:once": "tsx worker/index.ts",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

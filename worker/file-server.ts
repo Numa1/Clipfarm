@@ -1,14 +1,13 @@
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { resolveInLibrary } from "@/server/paths";
-import { contentTypeFor, parseRange } from "@/server/media";
+import { contentTypeFor, parseRange, resolveMedia } from "@/server/media";
 
 /** Loopback-only static server over the library, so Remotion can stream full-quality sources. */
 export function startLibraryServer(): Promise<{ baseUrl: string; close: () => void }> {
   const server = http.createServer((req, res) => {
     const relPath = decodeURIComponent((req.url ?? "/").split("?")[0].slice(1));
-    const file = resolveInLibrary(relPath);
+    const file = resolveMedia(relPath);
     if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
       res.writeHead(404).end();
       return;
