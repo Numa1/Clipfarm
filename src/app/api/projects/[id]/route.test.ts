@@ -114,6 +114,15 @@ describe("POST /api/projects/[id]/ops", () => {
     const [rev] = db.select().from(schema.projectRevisions).where(eq(schema.projectRevisions.projectId, "ops-3")).all();
     expect(rev.actor).toBe("agent");
   });
+
+  it("returns a French 404 for an unknown project", async () => {
+    const res = await opsRoute.POST(
+      post("/api/projects/does-not-exist/ops", { commands: [{ type: "setHook", hooks: [] }], baseRevision: 0 }),
+      params("does-not-exist"),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: "not_found", error: "projet introuvable" });
+  });
 });
 
 describe("GET /api/projects/[id]/revisions", () => {
@@ -125,5 +134,40 @@ describe("GET /api/projects/[id]/revisions", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.revisions.map((r: { rev: number }) => r.rev)).toEqual([2, 1]);
+  });
+
+  it("paginates via limit and before", async () => {
+    makeProject("rev-2");
+    for (let i = 0; i < 3; i++) {
+      await projectRoute.PUT(put("/api/projects/rev-2", { timeline: emptyTimeline(), baseRevision: i }), params("rev-2"));
+    }
+    const firstPage = await revisionsRoute.GET(new Request(url("/api/projects/rev-2/revisions?limit=2"), { headers: HOST }), params("rev-2"));
+    expect(firstPage.status).toBe(200);
+    const firstBody = await firstPage.json();
+    expect(firstBody.revisions.map((r: { rev: number }) => r.rev)).toEqual([3, 2]);
+    expect(firstBody.nextCursor).toBe(2);
+
+    const secondPage = await revisionsRoute.GET(
+      new Request(url(`/api/projects/rev-2/revisions?limit=2&before=${firstBody.nextCursor}`), { headers: HOST }),
+      params("rev-2"),
+    );
+    expect(secondPage.status).toBe(200);
+    const secondBody = await secondPage.json();
+    expect(secondBody.revisions.map((r: { rev: number }) => r.rev)).toEqual([1]);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  it("rejects an invalid limit with a French message", async () => {
+    makeProject("rev-3");
+    const res = await revisionsRoute.GET(new Request(url("/api/projects/rev-3/revisions?limit=0"), { headers: HOST }), params("rev-3"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "bad_request", error: "limit doit être un entier positif" });
+  });
+
+  it("rejects an invalid before with a French message", async () => {
+    makeProject("rev-4");
+    const res = await revisionsRoute.GET(new Request(url("/api/projects/rev-4/revisions?before=abc"), { headers: HOST }), params("rev-4"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "bad_request", error: "before doit être un entier" });
   });
 });

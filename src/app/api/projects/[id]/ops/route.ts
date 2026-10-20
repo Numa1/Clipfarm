@@ -24,7 +24,7 @@ const bodySchema = z.object({
 export const POST = route({ path: "/api/projects/[id]/ops", body: bodySchema }, ({ body, request, params: { id } }) => {
   const db = getDb();
   const project = db.select({ id: projects.id, timeline: projects.timeline }).from(projects).where(eq(projects.id, id)).get();
-  if (!project) throw new HttpError(404, "not_found", "not found");
+  if (!project) throw new HttpError(404, "not_found", "projet introuvable");
 
   const current = parseTimeline(project.timeline);
   const next = applyCommands(current, body.commands);
