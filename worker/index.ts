@@ -1,5 +1,6 @@
 import { getDb } from "@/server/db";
-import type { Job } from "@/server/db/schema";
+import type { Job, JobLane } from "@/server/db/schema";
+import { jobTimeoutMin } from "@/server/job-registry";
 import {
   claimNextJob,
   failJob,
@@ -23,18 +24,11 @@ const db = getDb();
 /**
  * Hard limit per job type, in minutes, so a hung process (ffmpeg, whisper, claude, uv…) cannot
  * block the queue forever. Sized for multi-hour sources; override with CLIPFARM_TIMEOUT_<TYPE>.
+ * The base value per type lives in the job registry; this only applies the env override.
  */
-const TIMEOUT_MIN: Record<Job["type"], number> = {
-  ingest: 60,
-  transcribe: 90,
-  moments: 15,
-  reframe: 30,
-  render: 30,
-};
-
 function timeoutMs(type: Job["type"]): number {
   const override = Number(process.env[`CLIPFARM_TIMEOUT_${type.toUpperCase()}`]);
-  return (override > 0 ? override : TIMEOUT_MIN[type]) * 60_000;
+  return (override > 0 ? override : jobTimeoutMin(type)) * 60_000;
 }
 
 /** Rejects with the signal's reason once aborted: the queue moves on even if a handler ignores it. */
@@ -105,22 +99,29 @@ async function runJob(job: Job) {
   }
 }
 
-async function loop() {
-  requeueStaleJobs(db);
-  const reframeProblem = reframeSetupProblem();
-  if (reframeProblem) console.warn(`⚠ Cadrage auto indisponible — ${reframeProblem}`);
-  console.log("Clipfarm worker ready — waiting for jobs…");
+/** One polling loop per lane, so a long "heavy" job (ingest, transcribe, reframe, render) never
+ *  starves the cheap "light" ones (moments): each loop only claims jobs of its own lane. */
+async function loop(lane: JobLane) {
   for (;;) {
     let job: Job | null = null;
     try {
-      job = claimNextJob(db);
+      job = claimNextJob(db, lane);
     } catch (e) {
       // Transient DB contention must never kill the worker; retry on next tick.
-      console.warn("claim failed, retrying:", e instanceof Error ? e.message : e);
+      console.warn(`[${lane}] claim failed, retrying:`, e instanceof Error ? e.message : e);
     }
     if (job) await runJob(job);
     else await new Promise((r) => setTimeout(r, POLL_MS));
   }
 }
 
-loop();
+async function main() {
+  requeueStaleJobs(db);
+  const reframeProblem = reframeSetupProblem();
+  if (reframeProblem) console.warn(`⚠ Cadrage auto indisponible — ${reframeProblem}`);
+  console.log("Clipfarm worker ready — waiting for jobs…");
+  // Both lanes run in parallel in this same process: "light" jobs keep moving while a "heavy" one runs.
+  await Promise.all([loop("heavy"), loop("light")]);
+}
+
+main();
