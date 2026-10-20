@@ -16,6 +16,7 @@ const momentsSchema = z.object({
         title: z.string(),
         hook: z.string(),
         teaser: z.object({ start: z.number(), end: z.number() }).nullable().optional(),
+        proof: z.string(),
         reason: z.string(),
         score: z.number().int().min(0).max(100),
       }),
@@ -48,7 +49,8 @@ Trouve les 5 à 10 meilleurs moments pour des shorts :
   au plus que de courte mise en contexte (quelques secondes) juste avant sa réaction. Ne cite jamais une ligne [VO]
   comme si c'était le créateur ;
 - autonomes : compréhensibles sans contexte, une idée complète avec une chute ;
-- denses : 20 à 45 secondes, le plus court possible tant que l'histoire tient, sans temps mort ;
+- denses : 20 à 45 secondes (end − start ≤ 45, impératif : un moment plus long est rejeté), le plus court
+  possible tant que l'histoire tient, sans temps mort ;
 - "start" sur la première phrase qui accroche (affirmation choc, question, conflit, révélation), jamais sur de la
   mise en place (« bon », « alors », « allez les gars »…) ; "end" juste après la chute ; des limites de phrase.
 
@@ -61,7 +63,16 @@ Pour chaque moment :
   (une promesse ou une question, pas le titre recopié, pas une réplique [VO]) ;
 - "teaser" : le pic du moment (punchline, cri, réaction), 1,5 à 4 s pris dans [start, end], rejoué en ouverture
   avant le début du moment — seulement si ça rend l'ouverture plus forte, sinon null ;
+- "proof" : la phrase du passage qui justifie le titre, copiée mot pour mot depuis la transcription entre
+  start et end (4 à 15 mots, sans l'horodatage) ;
 - "reason" : pourquoi ça marche (1 phrase) ; "score" : 0-100.
+
+Exactitude (impératif, un moment qui ne la respecte pas est rejeté) :
+- "title" et "hook" ne disent que ce qui est dit ou montré dans le passage [start, end] : rien de ce qui arrive
+  avant ou après dans la vidéo (un événement annoncé deux minutes plus tard n'appartient pas au moment) ;
+- n'invente aucun fait, aucun chiffre, aucune relation entre les personnes ;
+- ne complète jamais un prénom en personnalité connue (« Kylian » ne veut pas dire Kylian Mbappé) : garde le mot
+  exact de la transcription.
 Toutes les valeurs de temps sont en secondes, prises dans les horodatages.
 Réponds uniquement avec l'objet JSON { "moments": [...] }, sans texte autour.`;
 
@@ -105,6 +116,38 @@ export function formatTranscript(words: Word[]): string {
   return lines.join("\n");
 }
 
+/** Hard limits on a moment's length (the prompt asks for 20–45 s; a little tolerance on both sides). */
+export const MOMENT_MIN_SEC = 15;
+export const MOMENT_MAX_SEC = 50;
+
+type FoundMoment = z.infer<typeof momentsSchema>["moments"][number];
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/’/g, "'")
+    .replace(/[^\p{L}\p{N}']+/gu, " ")
+    .trim();
+}
+
+/** Why a moment proposed by Claude is not acceptable (empty when it is). */
+export function momentProblems(m: Pick<FoundMoment, "start" | "end" | "proof">, words: Word[]): string[] {
+  const problems: string[] = [];
+  const length = m.end - m.start;
+  if (length > MOMENT_MAX_SEC) problems.push(`dure ${Math.round(length)} s, le maximum est 45 s`);
+  if (length < MOMENT_MIN_SEC) problems.push(`dure ${Math.round(length)} s, le minimum est 20 s`);
+  // The proof must be words actually said inside the moment: the title is grounded in it.
+  const inside = normalize(words.filter((w) => w.start >= m.start - 0.5 && w.end <= m.end + 0.5).map((w) => w.w).join(" "));
+  const proof = normalize(m.proof);
+  const tokens = proof.split(" ").filter(Boolean);
+  const vocabulary = new Set(inside.split(" "));
+  const found = tokens.filter((t) => vocabulary.has(t)).length;
+  if (!tokens.length || (!inside.includes(proof) && found / tokens.length < 0.8)) {
+    problems.push(`la citation « ${m.proof} » n'est pas dite entre ${m.start} et ${m.end}`);
+  }
+  return problems;
+}
+
 /** Pull the moments JSON out of a free-text answer (```json fences or the outermost {...}). */
 export function extractJson(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
@@ -144,27 +187,59 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
     "",
     formatTranscript(tr.json.words),
   ].join("\n");
-  const data = await askClaude(prompt, signal).catch((e: unknown) => {
-    if (signal?.aborted) throw e;
-    return askClaude(prompt, signal); // one retry
-  });
+  const ask = (text: string) =>
+    askClaude(text, signal).catch((e: unknown) => {
+      if (signal?.aborted) throw e;
+      return askClaude(text, signal); // one retry
+    });
+  const words = tr.json.words;
+  let data = await ask(prompt);
   signal?.throwIfAborted();
 
+  // One correction round: Claude fixes (shortens, re-titles or drops) the moments that break the rules.
+  const issues = data.moments
+    .map((m) => ({ m, problems: momentProblems(m, words) }))
+    .filter((x) => x.problems.length);
+  if (issues.length) {
+    const feedback = [
+      prompt,
+      "",
+      "---",
+      `Ta réponse précédente : ${JSON.stringify(data)}`,
+      "",
+      "Ces moments ne respectent pas les règles :",
+      ...issues.map(({ m, problems }) => `- « ${m.title} » (${m.start}–${m.end}) : ${problems.join(" ; ")}`),
+      "",
+      "Corrige-les : raccourcis-les sur leur partie la plus forte, ou change le titre, l'accroche et la citation",
+      "pour qu'ils ne disent que ce qui est dans le passage, ou retire-les. Renvoie la liste complète au même format.",
+    ].join("\n");
+    data = await ask(feedback).catch((e: unknown) => {
+      if (signal?.aborted) throw e;
+      return data; // keep the first answer; the filter below drops what is still invalid
+    });
+    signal?.throwIfAborted();
+  }
+
   const rows = data.moments
-    .map(({ teaser, ...m }) => {
-      const start = Math.max(0, m.start);
-      const end = Math.min(duration, m.end);
-      // A teaser must replay a short peak from inside the moment; anything else is dropped.
-      const ok = teaser && teaser.start >= start && teaser.end <= end && teaser.end - teaser.start >= 1 && teaser.end - teaser.start <= 5;
-      return { ...m, start, end, teaserStart: ok ? teaser.start : null, teaserEnd: ok ? teaser.end : null };
+    .map((m) => ({ ...m, start: Math.max(0, m.start), end: Math.min(duration, m.end) }))
+    .filter((m) => {
+      const problems = momentProblems(m, words);
+      if (problems.length) console.warn(`moment rejeté « ${m.title} » : ${problems.join(" ; ")}`);
+      return !problems.length;
     })
-    .filter((m) => m.end - m.start >= 10)
-    .map((m) => ({ id: nanoid(10), sourceId: source.id, ...m }));
+    .map(({ teaser, proof, ...m }) => {
+      void proof; // only used to check the title, not stored
+      // A teaser must replay a short peak from inside the moment; anything else is dropped.
+      const ok = teaser && teaser.start >= m.start && teaser.end <= m.end && teaser.end - teaser.start >= 1 && teaser.end - teaser.start <= 5;
+      return { id: nanoid(10), sourceId: source.id, ...m, teaserStart: ok ? teaser.start : null, teaserEnd: ok ? teaser.end : null };
+    });
+  // Nothing usable: fail, so a source that already has moments keeps them (see markSourceFailed).
+  if (!rows.length) throw new Error("Aucun moment valide : durée ou titre non conforme à la transcription.");
 
   db.transaction((tx) => {
     tx.delete(moments).where(eq(moments.sourceId, source.id)).run();
     if (rows.length) tx.insert(moments).values(rows).run();
     tx.update(sources).set({ status: "ready" }).where(eq(sources.id, source.id)).run();
   });
-  return { count: rows.length };
+  return { count: rows.length, rejected: data.moments.length - rows.length, corrected: issues.length };
 }
