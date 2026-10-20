@@ -3,9 +3,10 @@ import { nanoid } from "nanoid";
 import { connection } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/server/db";
-import { moments, projects, sources } from "@/server/db/schema";
+import { moments, projects, sources, transcripts } from "@/server/db/schema";
 import { enqueueJob } from "@/server/jobs";
 import { timelineFromSegment } from "@/timeline/factory";
+import { speechRanges } from "@/timeline/silence";
 
 export async function GET() {
   await connection();
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
 
   const moment = "momentId" in body ? db.select().from(moments).where(eq(moments.id, body.momentId)).get() : null;
   const seg = moment
-    ? { sourceId: moment.sourceId, start: moment.start, end: moment.end, hook: moment.hook }
+    ? { sourceId: moment.sourceId, start: moment.start, end: moment.end, hook: moment.hook, title: moment.title }
     : "sourceId" in body
       ? body
       : null;
@@ -37,6 +38,10 @@ export async function POST(request: Request) {
 
   const source = db.select().from(sources).where(eq(sources.id, seg.sourceId)).get();
   if (!source?.proxyPath || !source.durationSec) return Response.json({ error: "source not ready" }, { status: 409 });
+  // Dead air out: keep only the spoken parts of the segment.
+  const words = db.select().from(transcripts).where(eq(transcripts.sourceId, source.id)).get()?.json.words ?? [];
+  const teaser =
+    moment?.teaserStart != null && moment.teaserEnd != null ? ([moment.teaserStart, moment.teaserEnd] as [number, number]) : undefined;
 
   const timeline = timelineFromSegment({
     // Asset id = source id (the worker relies on it to find the proxy).
@@ -51,6 +56,8 @@ export async function POST(request: Request) {
     },
     sourceIn: seg.start,
     sourceOut: seg.end,
+    keep: speechRanges(words, seg.start, seg.end),
+    teaser,
     hook: seg.hook,
     meta: { sourceId: source.id, momentId: moment?.id ?? null },
   });
@@ -59,7 +66,7 @@ export async function POST(request: Request) {
     .insert(projects)
     .values({
       id: nanoid(10),
-      name: seg.hook ? `${source.title} — ${seg.hook}` : source.title,
+      name: "title" in seg && seg.title ? seg.title : seg.hook ? `${source.title} — ${seg.hook}` : source.title,
       sourceId: source.id,
       momentId: moment?.id ?? null,
       timeline,

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { DB } from "@/server/db";
 import { projects, sources, transcripts, type Word } from "@/server/db/schema";
 import { resolveInLibrary } from "@/server/paths";
+import { analysisWindows, shotsInRange } from "@/timeline/crop";
 import { parseTimeline, shotSchema, type Shot } from "@/timeline/schema";
 import { run } from "../exec";
 
@@ -48,31 +49,37 @@ export async function reframe(
   const timeline = parseTimeline(project.timeline);
 
   const wanted = (id: string, mode: string) => (payload.itemIds ? payload.itemIds.includes(id) : mode === "auto");
-  const clips = timeline.tracks
-    .flatMap((t) => t.items)
-    .filter((i) => i.type === "video" && wanted(i.id, i.crop.mode));
+  const videos = timeline.tracks.flatMap((t) => t.items).filter((i) => i.type === "video");
+  const clips = videos.filter((i) => wanted(i.id, i.crop.mode));
   const updates = new Map<string, Shot[]>();
+
+  // Analyse whole windows of each source (all its clips, jump cuts included), then slice per clip.
+  const windows = [...new Set(clips.map((c) => c.assetId))].flatMap((assetId) => {
+    const ranges = videos.filter((v) => v.assetId === assetId).map((v) => [v.sourceIn, v.sourceOut] as [number, number]);
+    return analysisWindows(ranges)
+      .map(([from, to]) => ({ assetId, from, to, clips: clips.filter((c) => c.assetId === assetId && c.sourceIn >= from && c.sourceOut <= to) }))
+      .filter((w) => w.clips.length);
+  });
   let done = 0;
-  for (const clip of clips) {
-    if (clip.type !== "video") continue;
-    const asset = timeline.assets[clip.assetId];
+  for (const w of windows) {
+    const asset = timeline.assets[w.assetId];
     const source = asset && db.select().from(sources).where(eq(sources.id, asset.id)).get();
     const file = source?.proxyPath && resolveInLibrary(source.proxyPath);
     if (!source || !file) continue;
     const tr = db.select().from(transcripts).where(eq(transcripts.sourceId, source.id)).get();
-    const speech = tr ? speechIntervals(tr.json.words, clip.sourceIn, clip.sourceOut) : [];
-    const args = ["run", "--quiet", SCRIPT, file, String(clip.sourceIn), String(clip.sourceOut)];
+    const speech = tr ? speechIntervals(tr.json.words, w.from, w.to) : [];
+    const args = ["run", "--quiet", SCRIPT, file, String(w.from), String(w.to)];
     // The render uses the original file: lets the script avoid over-magnifying low-res sources.
     if (asset.height) args.push("--src-height", String(asset.height));
     const out = await run("uv", args, { input: JSON.stringify(speech), signal }).catch((e: Error) => {
       if (/ENOENT/.test(e.message)) throw new Error("uv est introuvable : installe-le (https://docs.astral.sh/uv/) pour le cadrage auto.");
       throw e;
     });
-    updates.set(clip.id, z.array(shotSchema).min(1).parse(JSON.parse(out)));
-    progress(++done / clips.length);
+    const shots = z.array(shotSchema).min(1).parse(JSON.parse(out));
+    for (const clip of w.clips) updates.set(clip.id, shotsInRange(shots, clip.sourceIn, clip.sourceOut));
+    progress(++done / windows.length);
   }
 
-  signal?.throwIfAborted();
   // Re-read: the user may have edited the timeline while we were computing. Only clips still in
   // auto mode receive the result (a clip switched to center/manual meanwhile keeps that choice).
   const fresh = db.select().from(projects).where(eq(projects.id, payload.projectId)).get();

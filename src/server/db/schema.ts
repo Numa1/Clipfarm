@@ -19,6 +19,8 @@ export const sources = sqliteTable("sources", {
   height: integer("height"),
   status: text("status").$type<SourceStatus>().notNull().default("uploaded"),
   error: text("error"),
+  /** Name of the person on screen (streamer, host…), used in generated titles. Optional. */
+  creator: text("creator"),
   createdAt: createdAt(),
 });
 
@@ -40,7 +42,13 @@ export const moments = sqliteTable("moments", {
     .references(() => sources.id, { onDelete: "cascade" }),
   start: real("start").notNull(),
   end: real("end").notNull(),
+  /** Title of the short (to publish). Null on moments found before titles existed. */
+  title: text("title"),
+  /** On-screen text over the first seconds. */
   hook: text("hook").notNull(),
+  /** Optional cold open: the peak of the moment, replayed at the very start. */
+  teaserStart: real("teaser_start"),
+  teaserEnd: real("teaser_end"),
   reason: text("reason").notNull(),
   score: integer("score").notNull(),
   createdAt: createdAt(),

@@ -1,11 +1,21 @@
 "use client";
 
-import { ChevronRightIcon, FilmIcon, Loader2Icon, ScissorsIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  FilmIcon,
+  Loader2Icon,
+  RefreshCwIcon,
+  ScissorsIcon,
+  SquareIcon,
+  Trash2Icon,
+  UploadIcon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { fetchJson, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Job, Moment, Source, SourceStatus } from "@/server/db/schema";
@@ -191,6 +201,24 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
     reload();
   };
 
+  const saveCreator = async (creator: string) => {
+    if (creator.trim() === (detail?.creator ?? "")) return;
+    const res = await fetch(`/api/sources/${sourceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ creator: creator.trim() || null }),
+    });
+    if (!res.ok) toast.error(`Enregistrement impossible : ${await res.text()}`);
+    else reload();
+  };
+
+  const findMomentsAgain = async () => {
+    const res = await fetch(`/api/sources/${sourceId}/moments`, { method: "POST" });
+    if (!res.ok) toast.error(`Impossible de relancer : ${await res.text()}`);
+    else toast.success("Recherche des moments relancée");
+    reload();
+  };
+
   const createProject = async (momentId: string) => {
     setCreating(momentId);
     try {
@@ -225,16 +253,38 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
           </Button>
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          key={detail.creator ?? ""}
+          defaultValue={detail.creator ?? ""}
+          placeholder="Nom du créateur (streamer, invité…), utilisé dans les titres"
+          aria-label="Nom du créateur"
+          className="h-8 max-w-sm flex-1"
+          onBlur={(e) => saveCreator(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        />
+        <Button variant="outline" size="sm" onClick={findMomentsAgain} disabled={!!activeJob || !detail.durationSec}>
+          <RefreshCwIcon />
+          Retrouver les moments
+        </Button>
+      </div>
       {detail.moments.length > 0 && (
         <ul className="grid gap-2 sm:grid-cols-2">
           {detail.moments.map((m) => (
             <li key={m.id} className="flex flex-col gap-2 rounded-lg border p-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="font-medium leading-snug">{m.hook}</p>
+                <p className="font-medium leading-snug">{m.title ?? m.hook}</p>
                 <Badge variant="secondary" className="tabular-nums">
                   {m.score}
                 </Badge>
               </div>
+              {m.title && (
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Accroche : </span>
+                  {m.hook}
+                  {m.teaserStart != null && <span className="text-muted-foreground"> · ouverture teaser</span>}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">{m.reason}</p>
               <div className="mt-auto flex items-center justify-between pt-1">
                 <span className="text-xs tabular-nums text-muted-foreground">

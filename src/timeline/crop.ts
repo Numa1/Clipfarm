@@ -52,6 +52,32 @@ export function shotAt(crop: Crop, t: number): Shot {
   return shots[i];
 }
 
+/**
+ * Shots covering source range [from, to] out of shots computed over a wider window: the shot active
+ * at `from` (moved to start there), then those starting inside the range.
+ */
+export function shotsInRange(shots: Shot[], from: number, to: number): Shot[] {
+  if (!shots.length) return [];
+  let i = 0;
+  while (i + 1 < shots.length && shots[i + 1].t <= from) i++;
+  return [{ ...shots[i], t: from }, ...shots.slice(i + 1).filter((s) => s.t < to)];
+}
+
+/**
+ * Merge source ranges into analysis windows: ranges closer than `maxGap` share a window, as long
+ * as it stays under `maxSpan` seconds. Framing a whole moment at once is far more reliable than
+ * framing each short jump-cut piece on its own (facecam detection needs time and scene cuts).
+ */
+export function analysisWindows(ranges: [number, number][], maxGap = 20, maxSpan = 180): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+    const last = out[out.length - 1];
+    if (last && a - last[1] <= maxGap && Math.max(last[1], b) - last[0] <= maxSpan) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
 const DEFAULT_CAM: Rect = { x: 0, y: 0.6, w: 0.3, h: 0.4 };
 const DEFAULT_CONTENT: Rect = { x: 0.2363, y: 0, w: 0.5273, h: 1 };
 
