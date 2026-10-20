@@ -31,19 +31,21 @@ const SNAP_PX = 8;
 const RULER_H = 24;
 const DEFAULT_PX_PER_SEC = 40;
 
-const TRACK_ICON = { video: Filmstrip, text: Text, audio: MusicNote } as const;
+const TRACK_ICON = { video: Filmstrip, text: Text, audio: MusicNote, caption: Text } as const;
 const ITEM_COLOR = {
   video: "bg-track-video/15 border-track-video/40 hover:bg-track-video/25 hover:border-track-video/60",
   text: "bg-track-text/15 border-track-text/40 hover:bg-track-text/25 hover:border-track-text/60",
   audio: "bg-track-audio/15 border-track-audio/40 hover:bg-track-audio/25 hover:border-track-audio/60",
+  caption: "bg-track-text/15 border-track-text/40 hover:bg-track-text/25 hover:border-track-text/60",
 } as const;
 const ITEM_SELECTED = {
   video: "bg-track-video/30 border-track-video ring-1 ring-track-video shadow-[0_0_16px_-4px_var(--color-track-video)]",
   text: "bg-track-text/30 border-track-text ring-1 ring-track-text shadow-[0_0_16px_-4px_var(--color-track-text)]",
   audio: "bg-track-audio/30 border-track-audio ring-1 ring-track-audio shadow-[0_0_16px_-4px_var(--color-track-audio)]",
+  caption: "bg-track-text/30 border-track-text ring-1 ring-track-text shadow-[0_0_16px_-4px_var(--color-track-text)]",
 } as const;
-const TRACK_TEXT = { video: "text-track-video", text: "text-track-text", audio: "text-track-audio" } as const;
-const TRACK_DOT = { video: "bg-track-video/15", text: "bg-track-text/15", audio: "bg-track-audio/15" } as const;
+const TRACK_TEXT = { video: "text-track-video", text: "text-track-text", audio: "text-track-audio", caption: "text-track-text" } as const;
+const TRACK_DOT = { video: "bg-track-video/15", text: "bg-track-text/15", audio: "bg-track-audio/15", caption: "bg-track-text/15" } as const;
 
 const DURATION_STATE = {
   over: { color: "warning", Icon: TriangleExclamation, label: "Plus de 60 s" },
@@ -260,7 +262,11 @@ function ItemLabel({ item, assets }: { item: Item; assets: Record<string, { src:
         </span>
       ) : (
         <span className="truncate font-medium text-foreground/90">
-          {item.type === "text" ? item.text || "Texte" : (assets[item.assetId]?.src.split("/").pop() ?? "Audio")}
+          {item.type === "text"
+            ? item.text || "Texte"
+            : item.type === "caption"
+              ? item.words.map((w) => w.w).join(" ") || "Sous-titres"
+              : (assets[item.assetId]?.src.split("/").pop() ?? "Audio")}
         </span>
       )}
     </span>

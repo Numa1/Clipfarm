@@ -112,6 +112,7 @@ const ITEM_META: Record<Item["type"], { label: string; icon: Icon; tone: string 
   video: { label: "Clip vidéo", icon: Filmstrip, tone: "bg-track-video/15 text-track-video" },
   text: { label: "Texte", icon: Text, tone: "bg-track-text/15 text-track-text" },
   audio: { label: "Son", icon: MusicNote, tone: "bg-track-audio/15 text-track-audio" },
+  caption: { label: "Sous-titres", icon: Text, tone: "bg-track-text/15 text-track-text" },
 };
 
 function NoSelection() {

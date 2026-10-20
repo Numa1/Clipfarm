@@ -6,7 +6,7 @@ import type { Item, Timeline, Track } from "./schema";
 export const MIN_ITEM_DURATION = 0.1;
 
 export function itemDuration(item: Item): number {
-  return item.type === "text" ? item.duration : item.sourceOut - item.sourceIn;
+  return item.type === "video" || item.type === "audio" ? item.sourceOut - item.sourceIn : item.duration;
 }
 
 export function itemEnd(item: Item): number {
@@ -52,10 +52,10 @@ export function splitItem(tl: Timeline, itemId: string, at: number): Timeline {
     const right = structuredClone(current(item));
     right.id = nanoid(8);
     right.start = at;
-    if (item.type === "text" && right.type === "text") {
+    if ((item.type === "text" && right.type === "text") || (item.type === "caption" && right.type === "caption")) {
       right.duration = item.duration - offset;
       item.duration = offset;
-    } else if (item.type !== "text" && right.type !== "text") {
+    } else if ((item.type === "video" || item.type === "audio") && (right.type === "video" || right.type === "audio")) {
       right.sourceIn = item.sourceIn + offset;
       item.sourceOut = item.sourceIn + offset;
     }
@@ -76,7 +76,7 @@ export function trimItem(
     const { item } = found;
     const end = itemEnd(item);
 
-    if (item.type === "text") {
+    if (item.type === "text" || item.type === "caption") {
       if (edge === "start") {
         const start = Math.min(Math.max(0, to), end - MIN_ITEM_DURATION);
         item.duration = end - start;
