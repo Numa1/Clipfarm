@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { HttpError, route } from "@/server/api";
 import { getDb } from "@/server/db";
 import { projects } from "@/server/db/schema";
 import { enqueueJob } from "@/server/jobs";
@@ -11,15 +12,12 @@ const bodySchema = z.object({ itemIds: z.array(z.string()).min(1).optional() }).
  * Recompute the automatic framing of some video clips (all auto clips when `itemIds` is omitted).
  * Targeted clips go back to auto; clips framed "center" or "manual" by the user are left alone.
  */
-export async function POST(req: Request, ctx: RouteContext<"/api/projects/[id]/reframe">) {
-  const { id } = await ctx.params;
-  const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) return Response.json({ error: parsed.error.message }, { status: 400 });
-  const { itemIds } = parsed.data;
+export const POST = route({ path: "/api/projects/[id]/reframe", body: bodySchema, validationStatus: 400 }, ({ body, params: { id } }) => {
+  const { itemIds } = body;
 
   const db = getDb();
   const project = db.select().from(projects).where(eq(projects.id, id)).get();
-  if (!project) return Response.json({ error: "not found" }, { status: 404 });
+  if (!project) throw new HttpError(404, "not_found", "not found");
   if (itemIds) {
     const timeline = parseTimeline(project.timeline);
     for (const track of timeline.tracks)
@@ -29,4 +27,4 @@ export async function POST(req: Request, ctx: RouteContext<"/api/projects/[id]/r
   }
   const job = enqueueJob(db, "reframe", { projectId: id, ...(itemIds && { itemIds }) });
   return Response.json(job, { status: 202 });
-}
+});

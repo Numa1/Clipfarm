@@ -5,18 +5,16 @@ import { pipeline } from "node:stream/promises";
 import { desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { connection } from "next/server";
+import { HttpError, route } from "@/server/api";
 import { getDb } from "@/server/db";
 import { costSelect, toCost } from "@/server/costs";
 import { sources } from "@/server/db/schema";
 import { enqueueJob } from "@/server/jobs";
-import { refuseNonLocal } from "@/server/local-guard";
 import { VIDEO_TYPES } from "@/server/media";
 import { rel, sourceDir } from "@/server/paths";
 
-export async function GET(request: Request) {
+export const GET = route({ local: true }, async () => {
   await connection();
-  const refused = refuseNonLocal(request);
-  if (refused) return refused;
   const db = getDb();
   const rows = db
     .select({
@@ -39,17 +37,16 @@ export async function GET(request: Request) {
       cost: toCost(cost),
     })),
   );
-}
+});
 
 /** Streamed upload: raw file body + `x-filename` header (no multipart, no memory buffering). */
-export async function POST(request: Request) {
-  const refused = refuseNonLocal(request);
-  if (refused) return refused;
+// No `body` schema: the wrapper must not consume the stream.
+export const POST = route({ local: true }, async ({ request }) => {
   const filename = decodeURIComponent(request.headers.get("x-filename") ?? "video.mp4");
-  if (!request.body) return Response.json({ error: "empty body" }, { status: 400 });
+  if (!request.body) throw new HttpError(400, "bad_request", "empty body");
   const ext = path.extname(filename).toLowerCase() || ".mp4";
   // Only video files: anything else could not be served back (see resolveMedia).
-  if (!(ext in VIDEO_TYPES)) return Response.json({ error: `unsupported video type ${ext}` }, { status: 415 });
+  if (!(ext in VIDEO_TYPES)) throw new HttpError(415, "unsupported_media_type", `unsupported video type ${ext}`);
 
   const id = nanoid(10);
   const dir = sourceDir(id);
@@ -65,4 +62,4 @@ export async function POST(request: Request) {
     .get();
   enqueueJob(db, "ingest", { sourceId: id });
   return Response.json(source, { status: 201 });
-}
+});
