@@ -210,9 +210,11 @@ const LAYOUT_HINTS: Record<ShotLayout, string> = {
 function VideoFields({ item }: { item: VideoItem }) {
   const { id: projectId } = useParams<{ id: string }>();
   const reframing = useEditor((s) => !!s.reframeJobId);
-  const playhead = useEditor((s) => s.playhead);
-  // Source time under the playhead, clamped to the clip.
-  const sourceTime = Math.min(item.sourceOut, Math.max(item.sourceIn, item.sourceIn + playhead - item.start));
+  // Start of the shot under the playhead (source time, clamped to the clip). Selecting it rather than
+  // the playhead re-renders the inspector when the shot changes, not on every played frame.
+  const sourceTime = useEditor((s) =>
+    shotAt(item.crop, Math.min(item.sourceOut, Math.max(item.sourceIn, item.sourceIn + s.playhead - item.start))).t,
+  );
   const shot = shotAt(item.crop, sourceTime);
   const shots = item.crop.mode === "auto" ? (item.crop.shots ?? []) : [];
 

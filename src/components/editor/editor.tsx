@@ -7,6 +7,7 @@ import { buttonVariants, Chip, Separator, Spinner, Toolbar, toast } from "@herou
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { fetchJson } from "@/lib/format";
 import type { Job, Project } from "@/server/db/schema";
 import { itemEnd, removeItem, splitItem } from "@/timeline/ops";
@@ -42,7 +43,17 @@ export function Editor() {
   // Latest startExport for the retry action of a failed-export toast (created inside a poll effect).
   const startExportRef = useRef(async () => {});
   const [lastExport, setLastExport] = useState<string | null>(null);
-  const { timeline, load, undo, redo, past, future, revision } = useEditor();
+  const { timeline, load, undo, redo, canUndo, canRedo, revision } = useEditor(
+    useShallow((s) => ({
+      timeline: s.timeline,
+      load: s.load,
+      undo: s.undo,
+      redo: s.redo,
+      canUndo: s.past.length > 0,
+      canRedo: s.future.length > 0,
+      revision: s.revision,
+    })),
+  );
   // Presentation only: last revision the server acknowledged, and the export whose success was shown.
   const [saved, setSaved] = useState({ id, revision: 0, failed: false });
   const [ackedExportId, setAckedExportId] = useState<string | null>(null);
@@ -245,10 +256,10 @@ export function Editor() {
             )}
           </AnimatePresence>
           <Separator orientation="vertical" className="h-5" />
-          <IconAction label="Annuler" shortcut="⌘Z" onPress={undo} isDisabled={!past.length}>
+          <IconAction label="Annuler" shortcut="⌘Z" onPress={undo} isDisabled={!canUndo}>
             <ArrowUturnCcwLeft />
           </IconAction>
-          <IconAction label="Rétablir" shortcut="⇧⌘Z" onPress={redo} isDisabled={!future.length}>
+          <IconAction label="Rétablir" shortcut="⇧⌘Z" onPress={redo} isDisabled={!canRedo}>
             <ArrowUturnCwRight />
           </IconAction>
           <Separator orientation="vertical" className="h-5" />

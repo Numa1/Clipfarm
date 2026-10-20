@@ -62,10 +62,39 @@ function DurationChip({ total }: { total: number }) {
   );
 }
 
+/** Current time label: the only part of the toolbar that follows playback frame by frame. */
+function PlayheadTime({ className }: { className?: string }) {
+  const playhead = useEditor((s) => s.playhead);
+  return <span className={className}>{formatTime(playhead)}</span>;
+}
+
+/**
+ * Playhead line. Isolated so that playback (30 updates a second) re-renders this line only, not the
+ * whole timeline with its items.
+ */
+function PlayheadLine({ pxPerSec, scrubbing }: { pxPerSec: number; scrubbing: boolean }) {
+  const playhead = useEditor((s) => s.playhead);
+  return (
+    <div
+      className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-danger"
+      style={{ left: playhead * pxPerSec }}
+    >
+      <div className="absolute top-0 left-1/2 h-3.5 w-2.5 -translate-x-1/2 rounded-t-[3px] rounded-b-full bg-danger shadow-sm" />
+      <span
+        className={cn(
+          "absolute top-[3px] left-2 rounded-sm bg-danger px-1 py-px font-mono text-[10px] leading-none whitespace-nowrap text-danger-foreground tabular-nums transition-[opacity,translate] duration-150 ease-snappy",
+          scrubbing ? "translate-x-0 opacity-100" : "-translate-x-1 opacity-0",
+        )}
+      >
+        {formatTime(playhead)}
+      </span>
+    </div>
+  );
+}
+
 export function TimelineView({ playerRef, onSplit }: { playerRef: RefObject<PlayerRef | null>; onSplit: () => void }) {
   const timeline = useEditor((s) => s.timeline)!;
   const pxPerSec = useEditor((s) => s.pxPerSec);
-  const playhead = useEditor((s) => s.playhead);
   const setZoom = useEditor((s) => s.setZoom);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrubbing, setScrubbing] = useState(false);
@@ -106,7 +135,7 @@ export function TimelineView({ playerRef, onSplit }: { playerRef: RefObject<Play
         </Button>
         <Separator orientation="vertical" className="h-5" />
         <span className="font-mono text-xs text-muted tabular-nums">
-          <span className="font-medium text-foreground">{formatTime(playhead)}</span>
+          <PlayheadTime className="font-medium text-foreground" />
           <span className="mx-1 text-muted/60">/</span>
           {formatTime(total)}
         </span>
@@ -172,20 +201,7 @@ export function TimelineView({ playerRef, onSplit }: { playerRef: RefObject<Play
               style={{ top: RULER_H }}
             />
 
-            <div
-              className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-danger"
-              style={{ left: playhead * pxPerSec }}
-            >
-              <div className="absolute top-0 left-1/2 h-3.5 w-2.5 -translate-x-1/2 rounded-t-[3px] rounded-b-full bg-danger shadow-sm" />
-              <span
-                className={cn(
-                  "absolute top-[3px] left-2 rounded-sm bg-danger px-1 py-px font-mono text-[10px] leading-none whitespace-nowrap text-danger-foreground tabular-nums transition-[opacity,translate] duration-150 ease-snappy",
-                  scrubbing ? "translate-x-0 opacity-100" : "-translate-x-1 opacity-0",
-                )}
-              >
-                {formatTime(playhead)}
-              </span>
-            </div>
+            <PlayheadLine pxPerSec={pxPerSec} scrubbing={scrubbing} />
           </div>
         </div>
       </div>
