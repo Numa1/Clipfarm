@@ -34,16 +34,25 @@ export async function ingest(db: DB, payload: { sourceId: string }, progress: (p
   };
 
   // Proxy: 540p H.264 with dense keyframes → fast scrubbing in the browser.
+  const encodeSoftware = () =>
+    run("ffmpeg", ["-y", "-i", input, "-vf", "scale=-2:540", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+      "-g", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy], { onStderr });
+
   await run(
     "ffmpeg",
     ["-y", "-i", input, "-vf", "scale=-2:540", "-c:v", "h264_videotoolbox", "-b:v", "2M", "-g", "30",
       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy],
     { onStderr },
-  ).catch(() =>
-    // Fallback when the hardware encoder is unavailable.
-    run("ffmpeg", ["-y", "-i", input, "-vf", "scale=-2:540", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-      "-g", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy], { onStderr }),
-  );
+  ).catch(encodeSoftware); // Fallback when the hardware encoder is unavailable.
+
+  // The hardware encoder can exit 0 while still emitting a malformed H.264 stream
+  // (invalid NAL units) under memory/GPU pressure, so re-decode the result to check.
+  // `-v error` means any stderr line is a real decode error, regardless of exit code.
+  let decodeErrored = false;
+  await run("ffmpeg", ["-v", "error", "-i", proxy, "-f", "null", "-"], {
+    onStderr: () => (decodeErrored = true),
+  }).catch(() => (decodeErrored = true));
+  if (decodeErrored) await encodeSoftware();
   await run("ffmpeg", ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio]);
 
   db.update(sources)
