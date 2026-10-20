@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { TIMELINE_VERSION, type Asset, type CropKeyframe, type Timeline } from "./schema";
+import { TIMELINE_VERSION, type Asset, type AudioItem, type CropKeyframe, type TextItem, type Timeline } from "./schema";
 
 export function emptyTimeline(): Timeline {
   return {
@@ -67,4 +67,38 @@ export function timelineFromSegment(opts: {
   }
   tl.meta = { ...opts.meta };
   return tl;
+}
+
+/** New on-screen text item ("Ton texte" default style), dropped at the given timeline position. */
+export function createTextItem(opts: { start: number; text: string }): TextItem {
+  return {
+    id: nanoid(8),
+    type: "text",
+    start: opts.start,
+    duration: 3,
+    text: opts.text,
+    x: 0.5,
+    y: 0.18,
+    maxWidth: 0.86,
+    style: { fontSize: 72, fontWeight: 800, color: "#ffffff", background: null, align: "center" },
+  };
+}
+
+/** New audio clip (e.g. an SFX drop) referencing an already-registered asset. */
+export function createAudioItem(opts: {
+  start: number;
+  assetId: string;
+  sourceIn: number;
+  sourceOut: number;
+  volume: number;
+}): AudioItem {
+  return {
+    id: nanoid(8),
+    type: "audio",
+    start: opts.start,
+    assetId: opts.assetId,
+    sourceIn: opts.sourceIn,
+    sourceOut: opts.sourceOut,
+    volume: opts.volume,
+  };
 }

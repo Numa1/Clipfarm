@@ -3,10 +3,10 @@
 import { ArrowUpFromLine, MusicNote, PlayFill, Plus, StopFill, Text } from "@gravity-ui/icons";
 import { EmptyState, ListView, TextShimmer } from "@heroui-pro/react";
 import { Button, Chip, Spinner, toast } from "@heroui/react";
-import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { produce } from "immer";
 import { fetchJson } from "@/lib/format";
+import { createAudioItem, createTextItem } from "@/timeline/factory";
 import { addItem } from "@/timeline/ops";
 import { IconAction } from "./icon-action";
 import { useEditor } from "./store";
@@ -61,21 +61,9 @@ export function MediaPanel() {
 
   const addText = () => {
     const { apply, playhead, select } = useEditor.getState();
-    const id = nanoid(8);
-    apply((tl) =>
-      addItem(tl, {
-        id,
-        type: "text",
-        start: playhead,
-        duration: 3,
-        text: "Ton texte",
-        x: 0.5,
-        y: 0.18,
-        maxWidth: 0.86,
-        style: { fontSize: 72, fontWeight: 800, color: "#ffffff", background: null, align: "center" },
-      }),
-    );
-    select(id);
+    const item = createTextItem({ start: playhead, text: "Ton texte" });
+    apply((tl) => addItem(tl, item));
+    select(item.id);
   };
 
   const addSfx = async (s: Sfx) => {
@@ -83,22 +71,14 @@ export function MediaPanel() {
       const durationSec = await audioDuration(`/api/media/${s.src}`);
       const { apply, playhead, select } = useEditor.getState();
       const assetId = `sfx:${s.src}`;
-      const id = nanoid(8);
+      const item = createAudioItem({ start: playhead, assetId, sourceIn: 0, sourceOut: durationSec, volume: 0.8 });
       apply((tl) => {
         const withAsset = produce(tl, (d) => {
           d.assets[assetId] ??= { id: assetId, kind: "audio", src: s.src, durationSec };
         });
-        return addItem(withAsset, {
-          id,
-          type: "audio",
-          start: playhead,
-          assetId,
-          sourceIn: 0,
-          sourceOut: durationSec,
-          volume: 0.8,
-        });
+        return addItem(withAsset, item);
       });
-      select(id);
+      select(item.id);
     } catch (e) {
       toast.danger(String(e));
     }
