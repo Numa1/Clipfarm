@@ -20,7 +20,11 @@ a de la couleur, l'interface s'efface autour.
   Échelle courte : 24/600 titre de page · 14/600 titres de section · 14 corps · 12 secondaire (`text-muted`).
   Titres de section en casse normale, jamais en capitales. `tabular-nums` sur toute valeur numérique.
 - **Rayons** : défaut HeroUI (`--radius: .5rem`), `rounded-2xl` pour les grands conteneurs.
-- **Mouvement** : celui des composants HeroUI, rien d'ajouté.
+- **Mouvement** : rapide, discret, jamais décoratif. Courbes `ease-smooth` (entrées, hover) et `ease-snappy`
+  (press, apparitions courtes) ; 150–240 ms pour les interactions, 360 ms max pour une entrée. Animations prêtes :
+  `animate-fade-in`, `animate-fade-in-up` (listes, décalées via `style={{ animationDelay }}` ≤ 40 ms/élément, plafonné),
+  `animate-scale-in`. On anime `opacity`/`transform` uniquement. `motion` (déjà installé) pour les transitions de
+  layout ou de valeur. `prefers-reduced-motion` coupe tout globalement.
 
 ## Tokens (surcharges de `.dark` dans `globals.css`)
 

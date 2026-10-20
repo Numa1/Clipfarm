@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowsRotateRight, ChevronDown, Filmstrip, Scissors, StopFill, TrashBin } from "@gravity-ui/icons";
-import { EmptyState, DropZone, ListView } from "@heroui-pro/react";
+import { EmptyState, DropZone } from "@heroui-pro/react";
 import {
   Accordion,
   AlertDialog,
@@ -16,13 +16,13 @@ import {
   toast,
 } from "@heroui/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { fetchJson, formatTime } from "@/lib/format";
+import { usePoll } from "@/lib/use-poll";
 import type { Job, Moment, Source, SourceStatus } from "@/server/db/schema";
 
 type SourceRow = Source & { momentCount: number };
 type SourceDetail = Source & { moments: Moment[]; activeJob: Job | null };
-type ProjectRow = { id: string; name: string; updatedAt: string; lastExportPath: string | null };
 
 const STATUS_LABEL: Record<SourceStatus, string> = {
   uploaded: "En file",
@@ -33,22 +33,8 @@ const STATUS_LABEL: Record<SourceStatus, string> = {
   error: "Erreur",
 };
 
-function usePoll<T>(url: string, ms: number): [T | null, () => void] {
-  const [data, setData] = useState<T | null>(null);
-  const load = useCallback(() => {
-    fetchJson<T>(url).then(setData).catch(() => {});
-  }, [url]);
-  useEffect(() => {
-    load();
-    const t = setInterval(load, ms);
-    return () => clearInterval(t);
-  }, [load, ms]);
-  return [data, load];
-}
-
 export function LibraryView() {
   const [sources, reloadSources] = usePoll<SourceRow[]>("/api/sources", 2000);
-  const [projects] = usePoll<ProjectRow[]>("/api/projects", 5000);
   const [openId, setOpenId] = useState<string | null>(null);
   const [upload, setUpload] = useState<{ name: string; progress: number } | null>(null);
 
@@ -167,28 +153,6 @@ export function LibraryView() {
         )}
       </section>
 
-      {!!projects?.length && (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">Projets</h2>
-          <ListView aria-label="Projets" items={projects}>
-            {(p) => (
-              <ListView.Item id={p.id} textValue={p.name} href={`/projects/${p.id}`}>
-                <ListView.ItemContent>
-                  <Scissors className="size-4 shrink-0 text-muted" />
-                  <ListView.Title>{p.name}</ListView.Title>
-                </ListView.ItemContent>
-                {p.lastExportPath && (
-                  <ListView.ItemAction>
-                    <Chip size="sm" variant="soft" color="success">
-                      <Chip.Label>Exporté</Chip.Label>
-                    </Chip>
-                  </ListView.ItemAction>
-                )}
-              </ListView.Item>
-            )}
-          </ListView>
-        </section>
-      )}
     </main>
   );
 }

@@ -39,3 +39,41 @@
   --track-text: oklch(0.8 0.1 80);
   --track-audio: oklch(0.74 0.1 160);
 }
+
+/* Motion vocabulary — every custom animation uses these, see DESIGN.md "Mouvement". */
+@theme {
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-snappy: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --animate-fade-in: fade-in 240ms var(--ease-smooth) both;
+  --animate-fade-in-up: fade-in-up 360ms var(--ease-smooth) both;
+  --animate-scale-in: scale-in 200ms var(--ease-snappy) both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
