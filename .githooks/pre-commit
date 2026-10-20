@@ -1,0 +1,4 @@
+#!/bin/sh
+# Typecheck, lint and unit tests before every commit (~15 s). Bypass once with: git commit --no-verify
+# Enabled by `pnpm install` (prepare script → git config core.hooksPath .githooks).
+exec pnpm -s check

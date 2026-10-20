@@ -11,12 +11,15 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "tsx e2e/pipeline.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
     "test:py": "uv run --quiet --with pytest --with 'opencv-python-headless>=4.9,<5' --with 'numpy>=1.26' pytest -q scripts/test_reframe.py",
     "db:generate": "drizzle-kit generate",
     "setup:all": "pnpm setup:whisper && pnpm setup:models",
     "setup:whisper": "./scripts/setup-whisper.sh",
     "setup:models": "./scripts/setup-models.sh",
-    "studio": "remotion studio src/remotion/index.ts"
+    "studio": "remotion studio src/remotion/index.ts",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@gravity-ui/icons": "^2.23.0",

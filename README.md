@@ -48,11 +48,17 @@ Toutes les tâches lourdes passent par la file `jobs` (SQLite) consommée par `w
 ## Commandes
 
 ```bash
-pnpm test         # tests du schéma et des opérations de timeline
+pnpm test         # tests unitaires (timeline, file de jobs, moments…)
+pnpm check        # typecheck + lint + tests unitaires (lancé avant chaque commit)
+pnpm test:e2e     # chaîne complète sur une vidéo générée, ~40 s (KEEP=1 garde les fichiers)
 pnpm typecheck
 pnpm db:generate  # après une modif de src/server/db/schema.ts
 pnpm studio       # Remotion Studio sur la composition
 ```
+
+`pnpm install` active le hook `.githooks/pre-commit`, qui lance `pnpm check` avant chaque commit
+(`git commit --no-verify` pour passer outre une fois). `pnpm test:e2e` utilise la vraie chaîne locale (ffmpeg,
+whisper, OpenCV, Remotion) et un faux Claude (`e2e/fake-claude.mjs`) : il ne consomme pas l'abonnement.
 
 ## Variables d'environnement (optionnelles)
 
