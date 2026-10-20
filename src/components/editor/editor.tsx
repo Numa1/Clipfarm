@@ -23,7 +23,8 @@ export function Editor() {
   const { id } = useParams<{ id: string }>();
   const playerRef = useRef<PlayerRef>(null);
   const [name, setName] = useState("");
-  const [reframing, setReframing] = useState(false);
+  const reframing = useEditor((s) => s.reframing);
+  const setReframing = useEditor((s) => s.setReframing);
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [lastExport, setLastExport] = useState<string | null>(null);
   const { timeline, load, undo, redo, past, future, revision } = useEditor();
@@ -38,7 +39,7 @@ export function Editor() {
         setReframing(p.activeJobs.some((j) => j.type === "reframe"));
       })
       .catch((e) => toast.error(String(e)));
-  }, [id, load]);
+  }, [id, load, setReframing]);
 
   // While auto-reframe runs in the worker, poll and merge its crops into the local timeline.
   useEffect(() => {
@@ -52,7 +53,7 @@ export function Editor() {
       toast.success("Recadrage auto appliqué");
     }, 1500);
     return () => clearInterval(t);
-  }, [id, reframing]);
+  }, [id, reframing, setReframing]);
 
   // Autosave (debounced) on every edit.
   useEffect(() => {

@@ -13,6 +13,7 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "setup:whisper": "./scripts/setup-whisper.sh",
+    "setup:models": "./scripts/setup-models.sh",
     "studio": "remotion studio src/remotion/index.ts"
   },
   "dependencies": {

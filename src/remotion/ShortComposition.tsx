@@ -1,5 +1,5 @@
 import { AbsoluteFill, Audio, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
-import { cropAt, cropTransform } from "@/timeline/crop";
+import { type Box, cropTransform, fitTransform, keyframeAt, regionTransform, shotAt } from "@/timeline/crop";
 import type { Asset, AudioItem, TextItem, Timeline, VideoItem } from "@/timeline/schema";
 
 /**
@@ -68,31 +68,77 @@ function VideoLayer({
 }) {
   const frame = useCurrentFrame();
   const sourceTime = item.sourceIn + frame / timeline.fps;
-  const kf = cropAt(item.crop, sourceTime);
-  const box = cropTransform(
-    kf,
-    { width: asset.width ?? 1920, height: asset.height ?? 1080 },
-    { width: timeline.width, height: timeline.height },
-  );
-  return (
-    <AbsoluteFill style={{ overflow: "hidden" }}>
+  const shot = shotAt(item.crop, sourceTime);
+  const src = { width: asset.width ?? 1920, height: asset.height ?? 1080 };
+  const W = timeline.width;
+  const H = timeline.height;
+
+  // Two stable video slots so a layout switch is a cut, not a remount (no reload/stutter):
+  // "main" carries the audio, "aux" is the facecam (split) or the blurred backdrop (fit).
+  // The aux slot only exists for clips that have a split/fit shot.
+  const needsAux = item.crop.mode === "auto" && !!item.crop.shots?.some((s) => s.layout !== "crop");
+  let main: Slot;
+  let aux: Slot | null = null;
+  if (shot.layout === "split") {
+    const camH = Math.round(H * shot.ratio);
+    aux = {
+      frame: { left: 0, top: 0, width: W, height: camH },
+      box: regionTransform(shot.cam, src, { width: W, height: camH }),
+    };
+    main = {
+      frame: { left: 0, top: camH, width: W, height: H - camH },
+      box: regionTransform(shot.content, src, { width: W, height: H - camH }),
+    };
+  } else if (shot.layout === "fit") {
+    const full = { left: 0, top: 0, width: W, height: H };
+    aux = { frame: full, box: cropTransform({ t: 0, x: 0.5, y: 0.5, zoom: 1 }, src, full), filter: "blur(40px) brightness(0.55)" };
+    main = { frame: full, box: fitTransform(src, full) };
+  } else {
+    const full = { left: 0, top: 0, width: W, height: H };
+    main = { frame: full, box: cropTransform(keyframeAt(shot.keyframes, sourceTime), src, full) };
+  }
+
+  const video = (slot: Slot | null, audible: boolean) => (
+    <div
+      style={{
+        position: "absolute",
+        overflow: "hidden",
+        ...(slot?.frame ?? { left: 0, top: 0, width: W, height: H }),
+        opacity: slot ? 1 : 0,
+      }}
+    >
       <OffthreadVideo
         src={resolveSrc(asset, media)}
         trimBefore={toFrames(item.sourceIn, timeline.fps)}
-        volume={muted ? 0 : item.volume}
+        volume={audible && !muted ? item.volume : 0}
+        muted={!audible}
         pauseWhenBuffering
         style={{
           position: "absolute",
-          width: box.width,
-          height: box.height,
-          left: box.left,
-          top: box.top,
+          ...(slot?.box ?? { left: 0, top: 0, width: W, height: H }),
           maxWidth: "none",
+          filter: slot?.filter,
         }}
       />
+    </div>
+  );
+
+  return (
+    <AbsoluteFill style={{ overflow: "hidden" }}>
+      {needsAux && video(aux, false)}
+      {video(main, true)}
+      {shot.layout === "split" && (
+        <div style={{ position: "absolute", left: 0, width: W, top: main.frame.top - 3, height: 6, background: "#000" }} />
+      )}
     </AbsoluteFill>
   );
 }
+
+type Slot = {
+  frame: { left: number; top: number; width: number; height: number };
+  box: Box;
+  filter?: string;
+};
 
 function AudioLayer({
   item,

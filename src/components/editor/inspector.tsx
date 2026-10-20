@@ -1,14 +1,16 @@
 "use client";
 
-import { Trash2Icon } from "lucide-react";
+import { Loader2Icon, ScanFaceIcon, Trash2Icon } from "lucide-react";
+import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { cropAt } from "@/timeline/crop";
+import { cropAt, shotAt, withShotLayout } from "@/timeline/crop";
 import { findItem, itemDuration, removeItem, updateItem } from "@/timeline/ops";
-import type { AudioItem, Item, TextItem, VideoItem } from "@/timeline/schema";
+import { type AudioItem, type Item, type ShotLayout, shotLayouts, type TextItem, type VideoItem } from "@/timeline/schema";
 import { useEditor } from "./store";
 
 /** Continuous edit (slider drag, typing): one history entry per gesture. */
@@ -114,13 +116,41 @@ export function Inspector() {
   );
 }
 
+const LAYOUT_LABELS: Record<ShotLayout, string> = {
+  crop: "Recadré",
+  split: "Écran partagé",
+  fit: "Plein cadre",
+};
+
 function VideoFields({ item }: { item: VideoItem }) {
+  const { id: projectId } = useParams<{ id: string }>();
+  const reframing = useEditor((s) => s.reframing);
+  const playhead = useEditor((s) => s.playhead);
+  // Source time under the playhead, clamped to the clip.
+  const sourceTime = Math.min(item.sourceOut, Math.max(item.sourceIn, item.sourceIn + playhead - item.start));
+  const shot = shotAt(item.crop, sourceTime);
+  const shots = item.crop.mode === "auto" ? (item.crop.shots ?? []) : [];
+
   // Manual framing edits a single static keyframe, seeded from the current auto/center framing.
   const current = cropAt(item.crop, item.sourceIn);
   const setManual = (patch: Partial<{ x: number; zoom: number }>) =>
     live<VideoItem>(item.id, {
       crop: { mode: "manual", keyframes: [{ ...current, t: item.sourceIn, ...patch }] },
     });
+
+  const recompute = async () => {
+    const st = useEditor.getState();
+    // Manual clips are left alone by the worker: put this one back to auto first, then save.
+    if (item.crop.mode === "manual") st.apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "auto", keyframes: [] } }));
+    await fetch(`/api/projects/${projectId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ timeline: useEditor.getState().timeline }),
+    });
+    const r = await fetch(`/api/projects/${projectId}/reframe`, { method: "POST" });
+    if (r.ok) st.setReframing(true);
+    else toast.error(`Recadrage impossible : ${await r.text()}`);
+  };
 
   return (
     <>
@@ -134,8 +164,9 @@ function VideoFields({ item }: { item: VideoItem }) {
               key={mode}
               size="xs"
               variant={item.crop.mode === mode ? "secondary" : "ghost"}
-              disabled={mode === "auto" && item.crop.mode !== "auto"}
+              disabled={reframing}
               onClick={() => {
+                if (mode === "auto" && item.crop.mode !== "auto") void recompute();
                 if (mode === "center") useEditor.getState().apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "center", keyframes: [] } }));
                 if (mode === "manual") {
                   setManual({});
@@ -148,9 +179,37 @@ function VideoFields({ item }: { item: VideoItem }) {
           ))}
         </div>
         {item.crop.mode === "auto" && (
-          <p className="text-xs text-muted-foreground">{item.crop.keyframes.length} points de suivi du visage.</p>
+          <Button size="xs" variant="outline" className="w-full" onClick={() => void recompute()} disabled={reframing}>
+            {reframing ? <Loader2Icon className="animate-spin" /> : <ScanFaceIcon />}
+            {reframing ? "Analyse en cours…" : "Recalculer le cadrage"}
+          </Button>
         )}
       </Field>
+      {item.crop.mode === "auto" && (
+        <Field label="Plan sous la tête de lecture" value={shots.length ? `${shots.indexOf(shot) + 1} / ${shots.length}` : undefined}>
+          <div className="grid grid-cols-3 gap-1">
+            {shotLayouts.map((layout) => (
+              <Button
+                key={layout}
+                size="xs"
+                variant={shot.layout === layout ? "secondary" : "ghost"}
+                disabled={reframing}
+                onClick={() =>
+                  useEditor
+                    .getState()
+                    .apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: withShotLayout(item.crop, sourceTime, layout) }))
+                }
+              >
+                {LAYOUT_LABELS[layout]}
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Recadré : suit le visage · Écran partagé : facecam en haut, contenu en bas · Plein cadre : image entière sur fond
+            flouté.
+          </p>
+        </Field>
+      )}
       {item.crop.mode === "manual" && (
         <>
           <Field label="Position horizontale" value={`${Math.round(current.x * 100)} %`}>

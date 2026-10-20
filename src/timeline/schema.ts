@@ -33,9 +33,35 @@ export const cropKeyframeSchema = z.object({
   zoom: z.number().min(1).max(4).default(1),
 });
 
+const unit = z.number().min(0).max(1);
+
+/** Rectangle normalized 0..1 on the source frame (top-left corner + size). */
+export const rectSchema = z.object({ x: unit, y: unit, w: unit.positive(), h: unit.positive() });
+
+export const shotLayouts = ["crop", "split", "fit"] as const;
+
+/** A shot holds one layout over SOURCE time [t, next shot.t): switching shots is a hard cut. */
+export const shotSchema = z.discriminatedUnion("layout", [
+  z.object({ t: seconds, layout: z.literal("crop"), keyframes: z.array(cropKeyframeSchema).min(1) }),
+  z.object({
+    t: seconds,
+    layout: z.literal("split"),
+    /** Facecam region, shown on top. */
+    cam: rectSchema,
+    /** Content region (gameplay, screen…), shown below. */
+    content: rectSchema,
+    /** Share of the output height given to the facecam. */
+    ratio: z.number().min(0.2).max(0.7).default(0.4),
+  }),
+  /** Whole source frame letterboxed over a blurred copy of itself. */
+  z.object({ t: seconds, layout: z.literal("fit") }),
+]);
+
 export const cropSchema = z.object({
   mode: z.enum(["auto", "manual", "center"]),
   keyframes: z.array(cropKeyframeSchema),
+  /** When present (auto mode), takes precedence over `keyframes`. Sorted by `t`. */
+  shots: z.array(shotSchema).optional(),
 });
 
 const baseItem = {
@@ -120,6 +146,9 @@ export const timelineSchema = z.object({
 export type Asset = z.infer<typeof assetSchema>;
 export type CropKeyframe = z.infer<typeof cropKeyframeSchema>;
 export type Crop = z.infer<typeof cropSchema>;
+export type Rect = z.infer<typeof rectSchema>;
+export type Shot = z.infer<typeof shotSchema>;
+export type ShotLayout = Shot["layout"];
 export type VideoItem = z.infer<typeof videoItemSchema>;
 export type AudioItem = z.infer<typeof audioItemSchema>;
 export type TextItem = z.infer<typeof textItemSchema>;

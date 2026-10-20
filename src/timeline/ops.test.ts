@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cropAt, cropTransform } from "./crop";
+import { cropAt, cropTransform, fitTransform, regionTransform, shotAt, withShotLayout } from "./crop";
 import { timelineFromSegment } from "./factory";
 import {
   addItem,
@@ -95,5 +95,66 @@ describe("crop", () => {
     const r = cropTransform({ t: 0, x: 0, y: 0.5, zoom: 1 }, { width: 1920, height: 1080 }, { width: 1080, height: 1920 });
     expect(r.height).toBeCloseTo(1920);
     expect(r.left).toBe(0); // clamped to the left edge
+  });
+
+  it("falls back to keyframes when there are no shots", () => {
+    const s = shotAt({ mode: "auto", keyframes: [{ t: 0, x: 0.3, y: 0.5, zoom: 1 }] }, 4);
+    expect(s.layout).toBe("crop");
+    expect(s.layout === "crop" && s.keyframes[0].x).toBe(0.3);
+    expect(shotAt({ mode: "center", keyframes: [] }, 4).layout).toBe("crop");
+  });
+
+  it("switches shots as a step function", () => {
+    const crop = {
+      mode: "auto" as const,
+      keyframes: [],
+      shots: [
+        { t: 10, layout: "fit" as const },
+        { t: 12, layout: "crop" as const, keyframes: [{ t: 12, x: 0.5, y: 0.4, zoom: 1 }] },
+      ],
+    };
+    expect(shotAt(crop, 5).layout).toBe("fit"); // before the first shot → first shot
+    expect(shotAt(crop, 11.99).layout).toBe("fit");
+    expect(shotAt(crop, 12).layout).toBe("crop");
+    // Manual mode ignores shots.
+    expect(shotAt({ ...crop, mode: "manual", keyframes: [{ t: 0, x: 0.5, y: 0.5, zoom: 1 }] }, 11).layout).toBe("crop");
+  });
+
+  it("fills a box with a source region (facecam in the top-right corner)", () => {
+    const src = { width: 1920, height: 1080 };
+    const out = { width: 1080, height: 768 };
+    const cam = { x: 0.75, y: 0, w: 0.25, h: 0.3 };
+    const r = regionTransform(cam, src, out);
+    // Region (480×324 px) scaled to cover 1080×768.
+    expect(r.width).toBeCloseTo(1920 * Math.max(1080 / 480, 768 / 324));
+    expect(r.left + 0.875 * r.width).toBeCloseTo(540); // region center → box center
+    expect(r.left + r.width).toBeGreaterThanOrEqual(1080); // no empty border
+    expect(r.top).toBe(0); // clamped on the top edge
+  });
+
+  it("changes only the shot under the playhead", () => {
+    const cam = { x: 0, y: 0.6, w: 0.3, h: 0.4 };
+    const crop = {
+      mode: "auto" as const,
+      keyframes: [],
+      shots: [
+        { t: 0, layout: "split" as const, cam, content: { x: 0.3, y: 0, w: 0.5, h: 1 }, ratio: 0.4 },
+        { t: 5, layout: "fit" as const },
+      ],
+    };
+    const a = withShotLayout(crop, 6, "split");
+    expect(a.shots?.[1]).toMatchObject({ t: 5, layout: "split", cam }); // geometry borrowed from the other split
+    const b = withShotLayout(crop, 1, "crop");
+    expect(b.shots?.[0].layout).toBe("crop");
+    expect(b.shots?.[1].layout).toBe("fit");
+    // A clip without shots becomes a single-shot auto crop.
+    expect(withShotLayout({ mode: "center", keyframes: [] }, 3, "fit").shots).toEqual([{ t: 0, layout: "fit" }]);
+  });
+
+  it("letterboxes the whole frame", () => {
+    const r = fitTransform({ width: 1920, height: 1080 }, { width: 1080, height: 1920 });
+    expect(r.width).toBe(1080);
+    expect(r.height).toBeCloseTo(607.5);
+    expect(r.top).toBeCloseTo((1920 - 607.5) / 2);
   });
 });
