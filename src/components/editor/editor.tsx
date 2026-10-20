@@ -1,16 +1,15 @@
 "use client";
 
 import type { PlayerRef } from "@remotion/player";
-import { ArrowLeftIcon, DownloadIcon, Loader2Icon, Redo2Icon, SquareIcon, Undo2Icon } from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { ArrowDownToLine, ArrowLeft, ArrowUturnCcwLeft, ArrowUturnCwRight, StopFill } from "@gravity-ui/icons";
+import { Button, buttonVariants, Chip, Separator, Spinner, Toolbar, toast } from "@heroui/react";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { fetchJson } from "@/lib/format";
 import type { Job, Project } from "@/server/db/schema";
 import { itemEnd, removeItem, splitItem } from "@/timeline/ops";
 import { parseTimeline, type Timeline } from "@/timeline/schema";
+import { IconAction } from "./icon-action";
 import { Inspector } from "./inspector";
 import { MediaPanel } from "./media-panel";
 import { Preview } from "./preview";
@@ -21,6 +20,7 @@ type ProjectResponse = Project & { activeJobs: Job[] };
 
 export function Editor() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const playerRef = useRef<PlayerRef>(null);
   const [name, setName] = useState("");
   const reframeJobId = useEditor((s) => s.reframeJobId);
@@ -39,7 +39,7 @@ export function Editor() {
         setLastExport(p.lastExportPath);
         setReframeJob(p.activeJobs.find((j) => j.type === "reframe")?.id ?? null);
       })
-      .catch((e) => toast.error(String(e)));
+      .catch((e) => toast.danger(String(e)));
   }, [id, load, setReframeJob]);
 
   // While auto-reframe runs in the worker, poll its job, then merge its shots into the local timeline.
@@ -50,7 +50,7 @@ export function Editor() {
       if (!job || job.status === "queued" || job.status === "running") return;
       if (job.status === "error") {
         setReframeJob(null);
-        toast.error(`Recadrage auto échoué : ${job.error ?? "erreur inconnue"}`);
+        toast.danger("Recadrage auto échoué", { description: job.error ?? "Erreur inconnue" });
         return;
       }
       if (job.status === "cancelled") {
@@ -78,7 +78,7 @@ export function Editor() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ timeline }),
       }).then(async (r) => {
-        if (!r.ok) toast.error(`Sauvegarde refusée : ${await r.text()}`);
+        if (!r.ok) toast.danger("Sauvegarde refusée", { description: await r.text() });
       });
     }, 600);
     return () => clearTimeout(t);
@@ -93,7 +93,7 @@ export function Editor() {
       if (j.status === "done") {
         setLastExport(String(j.result?.output));
         toast.success("Export terminé");
-      } else if (j.status === "error") toast.error(`Export échoué : ${j.error}`);
+      } else if (j.status === "error") toast.danger("Export échoué", { description: j.error ?? undefined });
       else if (j.status === "cancelled") toast.info("Export arrêté");
     }, 1000);
     return () => clearInterval(t);
@@ -112,7 +112,7 @@ export function Editor() {
   /** Stop a worker job; the polls above pick up the "cancelled" status and clean up. */
   const cancelJob = async (jobId: string) => {
     const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
-    if (!res.ok && res.status !== 409) toast.error(`Arrêt impossible : ${await res.text()}`);
+    if (!res.ok && res.status !== 409) toast.danger("Arrêt impossible", { description: await res.text() });
   };
 
   const splitAtPlayhead = useCallback(() => {
@@ -160,8 +160,8 @@ export function Editor() {
 
   if (!timeline) {
     return (
-      <div className="flex flex-1 items-center justify-center text-muted-foreground">
-        <Loader2Icon className="size-5 animate-spin" />
+      <div className="flex flex-1 items-center justify-center">
+        <Spinner />
       </div>
     );
   }
@@ -170,57 +170,52 @@ export function Editor() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-        <Button variant="ghost" size="icon-sm" render={<Link href="/" />} nativeButton={false} aria-label="Retour">
-          <ArrowLeftIcon />
-        </Button>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
+      <Toolbar aria-label="Projet" className="h-12 shrink-0 gap-2 rounded-none border-b border-border px-3">
+        <IconAction label="Bibliothèque" onPress={() => router.push("/")}>
+          <ArrowLeft />
+        </IconAction>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</span>
         {reframing && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2Icon className="size-3 animate-spin" /> Recadrage auto…
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => cancelJob(reframeJobId)}
-              aria-label="Arrêter le recadrage auto"
-              title="Arrêter le recadrage auto"
-            >
-              <SquareIcon />
-            </Button>
-          </span>
+          <Chip size="sm" variant="soft">
+            <Spinner size="sm" color="current" className="size-3" />
+            <Chip.Label>Recadrage auto</Chip.Label>
+          </Chip>
         )}
-        <Button variant="ghost" size="icon-sm" onClick={undo} disabled={!past.length} aria-label="Annuler">
-          <Undo2Icon />
-        </Button>
-        <Button variant="ghost" size="icon-sm" onClick={redo} disabled={!future.length} aria-label="Rétablir">
-          <Redo2Icon />
-        </Button>
+        {reframing && (
+          <IconAction label="Arrêter le recadrage auto" onPress={() => cancelJob(reframeJobId)}>
+            <StopFill />
+          </IconAction>
+        )}
+        <Separator orientation="vertical" className="h-5" />
+        <IconAction label="Annuler" shortcut="⌘Z" onPress={undo} isDisabled={!past.length}>
+          <ArrowUturnCcwLeft />
+        </IconAction>
+        <IconAction label="Rétablir" shortcut="⇧⌘Z" onPress={redo} isDisabled={!future.length}>
+          <ArrowUturnCwRight />
+        </IconAction>
+        <Separator orientation="vertical" className="h-5" />
         {lastExport && !exporting && (
-          <Button variant="outline" size="sm" render={<a href={`/api/media/${lastExport}`} download />} nativeButton={false}>
-            <DownloadIcon /> MP4
-          </Button>
+          <a href={`/api/media/${lastExport}`} download className={buttonVariants({ variant: "tertiary", size: "sm" })}>
+            <ArrowDownToLine />
+            MP4
+          </a>
         )}
         {exporting && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => cancelJob(exportJob.id)}
-            aria-label="Arrêter l'export"
-            title="Arrêter l'export"
-          >
-            <SquareIcon />
-          </Button>
+          <IconAction label="Arrêter l’export" onPress={() => cancelJob(exportJob.id)}>
+            <StopFill />
+          </IconAction>
         )}
-        <Button size="sm" onClick={startExport} disabled={!!exporting || reframing}>
+        <Button size="sm" onPress={startExport} isDisabled={reframing} isPending={!!exporting}>
           {exporting ? (
             <>
-              <Loader2Icon className="animate-spin" /> {Math.round((exportJob?.progress ?? 0) * 100)} %
+              <Spinner size="sm" color="current" />
+              <span className="tabular-nums">{Math.round((exportJob?.progress ?? 0) * 100)} %</span>
             </>
           ) : (
             "Exporter"
           )}
         </Button>
-      </header>
+      </Toolbar>
 
       <div className="flex min-h-0 flex-1">
         <MediaPanel />

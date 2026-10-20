@@ -1,5 +1,7 @@
 allowBuilds:
-  sharp: false
-  unrs-resolver: false
+  '@heroui-pro/react': true
   better-sqlite3: true
   esbuild: true
+  heroui-pro: true
+  sharp: false
+  unrs-resolver: false

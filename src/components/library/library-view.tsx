@@ -1,23 +1,23 @@
 "use client";
 
+import { ArrowsRotateRight, ChevronDown, Filmstrip, Scissors, StopFill, TrashBin } from "@gravity-ui/icons";
+import { EmptyState, DropZone, ListView } from "@heroui-pro/react";
 import {
-  ChevronRightIcon,
-  FilmIcon,
-  Loader2Icon,
-  RefreshCwIcon,
-  ScissorsIcon,
-  SquareIcon,
-  Trash2Icon,
-  UploadIcon,
-} from "lucide-react";
+  Accordion,
+  AlertDialog,
+  Button,
+  Card,
+  Chip,
+  Input,
+  Label,
+  ProgressBar,
+  Spinner,
+  Tooltip,
+  toast,
+} from "@heroui/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useCallback, useEffect, useState } from "react";
 import { fetchJson, formatTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import type { Job, Moment, Source, SourceStatus } from "@/server/db/schema";
 
 type SourceRow = Source & { momentCount: number };
@@ -51,8 +51,6 @@ export function LibraryView() {
   const [projects] = usePoll<ProjectRow[]>("/api/projects", 5000);
   const [openId, setOpenId] = useState<string | null>(null);
   const [upload, setUpload] = useState<{ name: string; progress: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // XHR rather than fetch: we want upload progress on multi-GB files.
   const uploadFile = (file: File) => {
@@ -63,130 +61,145 @@ export function LibraryView() {
     xhr.upload.onprogress = (e) => e.lengthComputable && setUpload({ name: file.name, progress: e.loaded / e.total });
     xhr.onload = () => {
       setUpload(null);
-      if (xhr.status >= 300) toast.error(`Upload échoué : ${xhr.responseText}`);
+      if (xhr.status >= 300) toast.danger("Upload échoué", { description: xhr.responseText });
       else {
-        toast.success(`${file.name} importé, traitement en cours`);
+        toast.success(`${file.name} importé`, { description: "Le traitement démarre." });
         reloadSources();
       }
     };
     xhr.onerror = () => {
       setUpload(null);
-      toast.error("Upload échoué");
+      toast.danger("Upload échoué");
     };
     xhr.send(file);
   };
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
-      <header className="mb-8 flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Clipfarm</h1>
-          <p className="text-sm text-muted-foreground">Vidéos longues → shorts 9:16 en quelques minutes.</p>
-        </div>
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-6 pt-12 pb-16">
+      <header className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Clipfarm</h1>
+        <p className="text-sm text-muted">Vidéos longues → shorts 9:16 en quelques minutes.</p>
       </header>
 
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          const file = e.dataTransfer.files[0];
-          if (file) uploadFile(file);
-        }}
-        disabled={!!upload}
-        className={cn(
-          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-10 text-sm text-muted-foreground transition-colors",
-          dragging ? "border-foreground/60 bg-muted/40" : "hover:border-foreground/30 hover:bg-muted/20",
+      <DropZone>
+        <DropZone.Area
+          isDisabled={!!upload}
+          onDrop={async (e) => {
+            const item = e.items.find((i) => i.kind === "file");
+            if (item?.kind !== "file") return;
+            if (!item.type.startsWith("video/")) toast.danger("Ce fichier n’est pas une vidéo");
+            else uploadFile(await item.getFile());
+          }}
+        >
+          <DropZone.Icon />
+          <DropZone.Label>Glisse une vidéo longue ici</DropZone.Label>
+          <DropZone.Description>Podcast, interview, stream… MP4, MOV ou MKV.</DropZone.Description>
+          <DropZone.Trigger>Choisir une vidéo</DropZone.Trigger>
+        </DropZone.Area>
+        <DropZone.Input
+          accept="video/*"
+          onSelect={(files) => {
+            const file = files[0];
+            if (file) uploadFile(file);
+          }}
+        />
+        {upload && (
+          <DropZone.FileList>
+            <DropZone.FileItem status="uploading">
+              <DropZone.FileFormatIcon format={upload.name.split(".").pop()?.toUpperCase() ?? "MP4"} />
+              <DropZone.FileInfo>
+                <DropZone.FileName>{upload.name}</DropZone.FileName>
+                <DropZone.FileMeta className="tabular-nums">{Math.round(upload.progress * 100)} %</DropZone.FileMeta>
+              </DropZone.FileInfo>
+              <DropZone.FileProgress aria-label="Progression de l’upload" value={upload.progress * 100}>
+                <DropZone.FileProgressTrack>
+                  <DropZone.FileProgressFill />
+                </DropZone.FileProgressTrack>
+              </DropZone.FileProgress>
+            </DropZone.FileItem>
+          </DropZone.FileList>
         )}
-      >
-        {upload ? (
-          <>
-            <Loader2Icon className="size-5 animate-spin" />
-            <span>
-              {upload.name} — {Math.round(upload.progress * 100)} %
-            </span>
-            <div className="h-1 w-64 overflow-hidden rounded-full bg-muted">
-              <div className="h-full bg-foreground transition-all" style={{ width: `${upload.progress * 100}%` }} />
-            </div>
-          </>
-        ) : (
-          <>
-            <UploadIcon className="size-5" />
-            <span>Glisse une vidéo longue ici (podcast, interview, stream) ou clique pour choisir</span>
-          </>
-        )}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="video/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) uploadFile(file);
-          e.target.value = "";
-        }}
-      />
+      </DropZone>
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Bibliothèque</h2>
-        {sources?.length === 0 && <p className="text-sm text-muted-foreground">Aucune vidéo pour l’instant.</p>}
-        <ul className="divide-y rounded-xl border">
-          {sources?.map((s) => (
-            <li key={s.id}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/30"
-                onClick={() => setOpenId(openId === s.id ? null : s.id)}
-              >
-                <ChevronRightIcon className={cn("size-4 shrink-0 transition-transform", openId === s.id && "rotate-90")} />
-                <FilmIcon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate font-medium">{s.title}</span>
-                {s.durationSec ? (
-                  <span className="text-xs tabular-nums text-muted-foreground">{formatTime(s.durationSec, 0)}</span>
-                ) : null}
-                <StatusBadge status={s.status} />
-                {s.status === "ready" && <span className="text-xs text-muted-foreground">{s.momentCount} moments</span>}
-              </button>
-              {openId === s.id && <SourcePanel sourceId={s.id} onDeleted={reloadSources} />}
-            </li>
-          ))}
-        </ul>
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold">Bibliothèque</h2>
+        {sources?.length === 0 ? (
+          <EmptyState size="sm">
+            <EmptyState.Header>
+              <EmptyState.Media variant="icon">
+                <Filmstrip />
+              </EmptyState.Media>
+              <EmptyState.Title>Aucune vidéo</EmptyState.Title>
+              <EmptyState.Description>Importe une vidéo longue pour trouver ses meilleurs moments.</EmptyState.Description>
+            </EmptyState.Header>
+          </EmptyState>
+        ) : (
+          <Accordion
+            variant="surface"
+            expandedKeys={openId ? [openId] : []}
+            onExpandedChange={(keys) => setOpenId((([...keys].find((k) => k !== openId) as string | undefined) ?? null))}
+          >
+            {sources?.map((s) => (
+              <Accordion.Item key={s.id} id={s.id}>
+                <Accordion.Heading>
+                  <Accordion.Trigger className="gap-3">
+                    <span className="min-w-0 flex-1 truncate text-start font-medium">{s.title}</span>
+                    {s.durationSec ? (
+                      <span className="font-mono text-xs text-muted tabular-nums">{formatTime(s.durationSec, 0)}</span>
+                    ) : null}
+                    {s.status === "ready" && (
+                      <span className="text-xs text-muted tabular-nums">{s.momentCount} moments</span>
+                    )}
+                    <StatusChip status={s.status} />
+                    <Accordion.Indicator>
+                      <ChevronDown />
+                    </Accordion.Indicator>
+                  </Accordion.Trigger>
+                </Accordion.Heading>
+                <Accordion.Panel>
+                  <Accordion.Body>
+                    {openId === s.id && <SourcePanel sourceId={s.id} onDeleted={reloadSources} />}
+                  </Accordion.Body>
+                </Accordion.Panel>
+              </Accordion.Item>
+            ))}
+          </Accordion>
+        )}
       </section>
 
       {!!projects?.length && (
-        <section className="mt-10">
-          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Projets</h2>
-          <ul className="divide-y rounded-xl border">
-            {projects.map((p) => (
-              <li key={p.id}>
-                <a href={`/projects/${p.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30">
-                  <ScissorsIcon className="size-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  {p.lastExportPath && <Badge variant="secondary">Exporté</Badge>}
-                </a>
-              </li>
-            ))}
-          </ul>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold">Projets</h2>
+          <ListView aria-label="Projets" items={projects}>
+            {(p) => (
+              <ListView.Item id={p.id} textValue={p.name} href={`/projects/${p.id}`}>
+                <ListView.ItemContent>
+                  <Scissors className="size-4 shrink-0 text-muted" />
+                  <ListView.Title>{p.name}</ListView.Title>
+                </ListView.ItemContent>
+                {p.lastExportPath && (
+                  <ListView.ItemAction>
+                    <Chip size="sm" variant="soft" color="success">
+                      <Chip.Label>Exporté</Chip.Label>
+                    </Chip>
+                  </ListView.ItemAction>
+                )}
+              </ListView.Item>
+            )}
+          </ListView>
         </section>
       )}
     </main>
   );
 }
 
-function StatusBadge({ status }: { status: SourceStatus }) {
+function StatusChip({ status }: { status: SourceStatus }) {
   const busy = status !== "ready" && status !== "error";
   return (
-    <Badge variant={status === "error" ? "destructive" : busy ? "outline" : "secondary"} className="gap-1">
-      {busy && <Loader2Icon className="size-3 animate-spin" />}
-      {STATUS_LABEL[status]}
-    </Badge>
+    <Chip size="sm" variant="soft" color={status === "error" ? "danger" : busy ? "default" : "success"}>
+      {busy && <Spinner size="sm" color="current" className="size-3" />}
+      <Chip.Label>{STATUS_LABEL[status]}</Chip.Label>
+    </Chip>
   );
 }
 
@@ -197,7 +210,7 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
 
   const cancelJob = async (jobId: string) => {
     const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
-    if (!res.ok && res.status !== 409) toast.error(`Arrêt impossible : ${await res.text()}`);
+    if (!res.ok && res.status !== 409) toast.danger("Arrêt impossible", { description: await res.text() });
     reload();
   };
 
@@ -208,13 +221,13 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ creator: creator.trim() || null }),
     });
-    if (!res.ok) toast.error(`Enregistrement impossible : ${await res.text()}`);
+    if (!res.ok) toast.danger("Enregistrement impossible", { description: await res.text() });
     else reload();
   };
 
   const findMomentsAgain = async () => {
     const res = await fetch(`/api/sources/${sourceId}/moments`, { method: "POST" });
-    if (!res.ok) toast.error(`Impossible de relancer : ${await res.text()}`);
+    if (!res.ok) toast.danger("Impossible de relancer", { description: await res.text() });
     else toast.success("Recherche des moments relancée");
     reload();
   };
@@ -229,89 +242,140 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
       });
       router.push(`/projects/${id}`);
     } catch (e) {
-      toast.error(String(e));
+      toast.danger(String(e));
       setCreating(null);
     }
   };
 
-  if (!detail) return <div className="px-11 pb-4 text-sm text-muted-foreground">Chargement…</div>;
+  const deleteSource = async () => {
+    await fetch(`/api/sources/${sourceId}`, { method: "DELETE" });
+    onDeleted();
+  };
+
+  if (!detail) {
+    return (
+      <div className="flex justify-center py-4">
+        <Spinner size="sm" />
+      </div>
+    );
+  }
   const { activeJob } = detail;
 
   return (
-    <div className="space-y-3 px-4 pb-4 sm:pl-11">
-      {detail.error && <p className="rounded-lg bg-destructive/10 p-3 font-mono text-xs text-destructive">{detail.error}</p>}
+    <div className="flex flex-col gap-4">
+      {detail.error && (
+        <p className="rounded-xl bg-danger-soft p-3 font-mono text-xs text-danger-soft-foreground">{detail.error}</p>
+      )}
+
       {activeJob && (
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span>{activeJob.type}</span>
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-foreground transition-all" style={{ width: `${activeJob.progress * 100}%` }} />
-          </div>
-          <span className="tabular-nums">{Math.round(activeJob.progress * 100)} %</span>
-          <Button variant="ghost" size="sm" onClick={() => cancelJob(activeJob.id)}>
-            <SquareIcon />
+        <div className="flex items-end gap-3">
+          <ProgressBar aria-label={activeJob.type} size="sm" value={activeJob.progress * 100} className="flex-1">
+            <Label className="text-xs text-muted">{STATUS_LABEL[detail.status] ?? activeJob.type}</Label>
+            <ProgressBar.Output className="text-xs tabular-nums" />
+            <ProgressBar.Track>
+              <ProgressBar.Fill />
+            </ProgressBar.Track>
+          </ProgressBar>
+          <Button size="sm" variant="ghost" onPress={() => cancelJob(activeJob.id)}>
+            <StopFill />
             Arrêter
           </Button>
         </div>
       )}
+
       <div className="flex flex-wrap items-center gap-2">
         <Input
           key={detail.creator ?? ""}
+          variant="secondary"
           defaultValue={detail.creator ?? ""}
-          placeholder="Nom du créateur (streamer, invité…), utilisé dans les titres"
-          aria-label="Nom du créateur"
-          className="h-8 max-w-sm flex-1"
+          placeholder="Nom du créateur (streamer, invité…)"
+          aria-label="Nom du créateur, utilisé dans les titres"
+          className="min-w-56 max-w-sm flex-1"
           onBlur={(e) => saveCreator(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         />
-        <Button variant="outline" size="sm" onClick={findMomentsAgain} disabled={!!activeJob || !detail.durationSec}>
-          <RefreshCwIcon />
+        <Button variant="tertiary" onPress={findMomentsAgain} isDisabled={!!activeJob || !detail.durationSec}>
+          <ArrowsRotateRight />
           Retrouver les moments
         </Button>
       </div>
+
       {detail.moments.length > 0 && (
-        <ul className="grid gap-2 sm:grid-cols-2">
+        <ul className="grid gap-3 sm:grid-cols-2">
           {detail.moments.map((m) => (
-            <li key={m.id} className="flex flex-col gap-2 rounded-lg border p-3">
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-medium leading-snug">{m.title ?? m.hook}</p>
-                <Badge variant="secondary" className="tabular-nums">
-                  {m.score}
-                </Badge>
-              </div>
-              {m.title && (
-                <p className="text-sm">
-                  <span className="text-muted-foreground">Accroche : </span>
-                  {m.hook}
-                  {m.teaserStart != null && <span className="text-muted-foreground"> · ouverture teaser</span>}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">{m.reason}</p>
-              <div className="mt-auto flex items-center justify-between pt-1">
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {formatTime(m.start, 0)} → {formatTime(m.end, 0)} · {Math.round(m.end - m.start)} s
-                </span>
-                <Button size="sm" onClick={() => createProject(m.id)} disabled={!!creating}>
-                  {creating === m.id ? <Loader2Icon className="animate-spin" /> : <ScissorsIcon />}
-                  Monter
-                </Button>
-              </div>
+            <li key={m.id} className="flex">
+              <Card variant="secondary" className="flex-1">
+                <Card.Header className="flex-row items-start justify-between gap-3">
+                  <Card.Title className="text-sm leading-snug">{m.title ?? m.hook}</Card.Title>
+                  <Tooltip delay={300}>
+                    <Tooltip.Trigger aria-label="Score">
+                      <Chip size="sm" variant="soft" className="tabular-nums">
+                        <Chip.Label>{m.score}</Chip.Label>
+                      </Chip>
+                    </Tooltip.Trigger>
+                    <Tooltip.Content>Score de viralité estimé</Tooltip.Content>
+                  </Tooltip>
+                </Card.Header>
+                <Card.Content className="gap-1.5 text-sm">
+                  {m.title && (
+                    <p>
+                      <span className="text-muted">Accroche · </span>
+                      {m.hook}
+                      {m.teaserStart != null && <span className="text-muted"> · ouverture teaser</span>}
+                    </p>
+                  )}
+                  <p className="line-clamp-3 text-xs text-muted">{m.reason}</p>
+                </Card.Content>
+                <Card.Footer className="mt-auto items-center justify-between">
+                  <span className="font-mono text-xs text-muted tabular-nums">
+                    {formatTime(m.start, 0)} → {formatTime(m.end, 0)} · {Math.round(m.end - m.start)} s
+                  </span>
+                  <Button size="sm" onPress={() => createProject(m.id)} isDisabled={!!creating} isPending={creating === m.id}>
+                    {({ isPending }) => (
+                      <>
+                        {isPending ? <Spinner size="sm" color="current" /> : <Scissors />}
+                        Monter
+                      </>
+                    )}
+                  </Button>
+                </Card.Footer>
+              </Card>
             </li>
           ))}
         </ul>
       )}
+
       <div className="flex justify-end">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={async () => {
-            if (!confirm(`Supprimer « ${detail.title} » et tous ses fichiers ?`)) return;
-            await fetch(`/api/sources/${sourceId}`, { method: "DELETE" });
-            onDeleted();
-          }}
-        >
-          <Trash2Icon />
-          Supprimer
-        </Button>
+        <AlertDialog>
+          <Button size="sm" variant="danger-soft">
+            <TrashBin />
+            Supprimer
+          </Button>
+          <AlertDialog.Backdrop>
+            <AlertDialog.Container>
+              <AlertDialog.Dialog className="sm:max-w-md">
+                <AlertDialog.Header>
+                  <AlertDialog.Icon status="danger" />
+                  <AlertDialog.Heading>Supprimer cette vidéo ?</AlertDialog.Heading>
+                </AlertDialog.Header>
+                <AlertDialog.Body>
+                  <p>
+                    « {detail.title} », ses moments et tous ses fichiers seront supprimés. Cette action est
+                    irréversible.
+                  </p>
+                </AlertDialog.Body>
+                <AlertDialog.Footer>
+                  <Button slot="close" variant="tertiary">
+                    Annuler
+                  </Button>
+                  <Button slot="close" variant="danger" onPress={deleteSource}>
+                    Supprimer
+                  </Button>
+                </AlertDialog.Footer>
+              </AlertDialog.Dialog>
+            </AlertDialog.Container>
+          </AlertDialog.Backdrop>
+        </AlertDialog>
       </div>
     </div>
   );

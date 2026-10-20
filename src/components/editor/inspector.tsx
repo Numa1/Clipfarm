@@ -1,16 +1,25 @@
 "use client";
 
-import { Loader2Icon, ScanFaceIcon, Trash2Icon } from "lucide-react";
+import { Ban, ArrowsRotateRight, TrashBin } from "@gravity-ui/icons";
+import { Segment } from "@heroui-pro/react";
+import {
+  ColorSwatchPicker,
+  Kbd,
+  Label,
+  Separator,
+  Slider,
+  Spinner,
+  TextArea,
+  ToggleButton,
+  toast,
+} from "@heroui/react";
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import { formatTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { cropAt, shotAt, withShotLayout } from "@/timeline/crop";
 import { findItem, itemDuration, removeItem, updateItem } from "@/timeline/ops";
 import { type AudioItem, type Item, type ShotLayout, shotLayouts, type TextItem, type VideoItem } from "@/timeline/schema";
+import { IconAction } from "./icon-action";
 import { useEditor } from "./store";
 
 /** Continuous edit (slider drag, typing): one history entry per gesture. */
@@ -21,12 +30,12 @@ function live<T extends Item>(id: string, patch: Partial<Omit<T, "id" | "type">>
 }
 const commit = () => useEditor.getState().endGesture();
 
-function Field({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
+function Field({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }) {
   return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        {value !== undefined && <span className="tabular-nums">{value}</span>}
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-medium text-muted">{label}</Label>
+        {aside}
       </div>
       {children}
     </div>
@@ -34,12 +43,16 @@ function Field({ label, value, children }: { label: string; value?: ReactNode; c
 }
 
 function NumberSlider({
+  label,
+  display,
   value,
   min,
   max,
   step,
   onChange,
 }: {
+  label: string;
+  display: string | number;
   value: number;
   min: number;
   max: number;
@@ -48,65 +61,78 @@ function NumberSlider({
 }) {
   return (
     <Slider
-      value={[value]}
-      min={min}
-      max={max}
+      value={value}
+      minValue={min}
+      maxValue={max}
       step={step}
-      onValueChange={(v) => onChange(Array.isArray(v) ? v[0] : v)}
-      onValueCommitted={commit}
-    />
+      onChange={(v) => onChange(Array.isArray(v) ? v[0] : v)}
+      onChangeEnd={commit}
+    >
+      <Label className="text-xs font-medium text-muted">{label}</Label>
+      <Slider.Output className="text-xs tabular-nums">{display}</Slider.Output>
+      <Slider.Track>
+        <Slider.Fill />
+        <Slider.Thumb />
+      </Slider.Track>
+    </Slider>
   );
 }
+
+const SHORTCUTS: [string, string][] = [
+  ["Espace", "Lecture / pause"],
+  ["S", "Couper à la tête de lecture"],
+  ["Suppr", "Supprimer la sélection"],
+  ["⌘Z", "Annuler"],
+  ["⇧⌘Z", "Rétablir"],
+  ["⌘ molette", "Zoom de la timeline"],
+];
 
 export function Inspector() {
   const selectedId = useEditor((s) => s.selectedId);
   const item = useEditor((s) => (s.selectedId && s.timeline ? findItem(s.timeline, s.selectedId)?.item : null));
 
   return (
-    <aside className="hidden w-72 shrink-0 flex-col gap-5 overflow-y-auto border-l p-4 lg:flex">
+    <aside className="hidden w-72 shrink-0 flex-col gap-6 overflow-y-auto border-l border-border p-4 lg:flex">
       {!item || !selectedId ? (
-        <div className="space-y-2 text-xs text-muted-foreground">
-          <p>Sélectionne un élément de la timeline pour le modifier.</p>
-          <ul className="space-y-1">
-            <li>
-              <kbd>Espace</kbd> lecture / pause
-            </li>
-            <li>
-              <kbd>S</kbd> couper à la tête de lecture
-            </li>
-            <li>
-              <kbd>Suppr</kbd> supprimer la sélection
-            </li>
-            <li>
-              <kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd> annuler / rétablir
-            </li>
-            <li>
-              <kbd>⌘ + molette</kbd> zoom de la timeline
-            </li>
-          </ul>
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-muted">Sélectionne un élément de la timeline pour le modifier.</p>
+          <dl className="flex flex-col gap-2.5">
+            {SHORTCUTS.map(([key, action]) => (
+              <div key={key} className="flex items-center justify-between gap-3 text-xs">
+                <dt className="text-muted">{action}</dt>
+                <dd>
+                  <Kbd>
+                    <Kbd.Content>{key}</Kbd.Content>
+                  </Kbd>
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       ) : (
         <>
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">
-              {item.type === "video" ? "Clip vidéo" : item.type === "audio" ? "Audio" : "Texte"}
-            </h3>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Supprimer"
-              onClick={() => {
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-col gap-0.5">
+              <h3 className="text-sm font-semibold">
+                {item.type === "video" ? "Clip vidéo" : item.type === "audio" ? "Audio" : "Texte"}
+              </h3>
+              <p className="font-mono text-xs text-muted tabular-nums">
+                {formatTime(item.start)} · {formatTime(itemDuration(item))}
+              </p>
+            </div>
+            <IconAction
+              label="Supprimer"
+              shortcut="Suppr"
+              onPress={() => {
                 const st = useEditor.getState();
                 st.apply((tl) => removeItem(tl, item.id));
                 st.select(null);
               }}
             >
-              <Trash2Icon />
-            </Button>
+              <TrashBin />
+            </IconAction>
           </div>
-          <p className="-mt-3 text-xs tabular-nums text-muted-foreground">
-            {formatTime(item.start)} · durée {formatTime(itemDuration(item))}
-          </p>
+          <Separator />
           {item.type === "video" && <VideoFields item={item} />}
           {item.type === "audio" && <AudioFields item={item} />}
           {item.type === "text" && <TextFields item={item} />}
@@ -118,8 +144,14 @@ export function Inspector() {
 
 const LAYOUT_LABELS: Record<ShotLayout, string> = {
   crop: "Recadré",
-  split: "Écran partagé",
+  split: "Partagé",
   fit: "Plein cadre",
+};
+
+const LAYOUT_HINTS: Record<ShotLayout, string> = {
+  crop: "Suit le visage du locuteur.",
+  split: "Facecam en haut, contenu en bas.",
+  fit: "Image entière sur fond flouté.",
 };
 
 function VideoFields({ item }: { item: VideoItem }) {
@@ -153,75 +185,101 @@ function VideoFields({ item }: { item: VideoItem }) {
       body: JSON.stringify({ itemIds: [item.id] }),
     });
     if (r.ok) st.setReframeJob(((await r.json()) as { id: string }).id);
-    else toast.error(`Recadrage impossible : ${await r.text()}`);
+    else toast.danger("Recadrage impossible", { description: await r.text() });
   };
 
   return (
     <>
-      <Field label="Volume" value={`${Math.round(item.volume * 100)} %`}>
-        <NumberSlider value={item.volume} min={0} max={2} step={0.05} onChange={(volume) => live<VideoItem>(item.id, { volume })} />
-      </Field>
-      <Field label="Cadrage 9:16">
-        <div className="grid grid-cols-3 gap-1">
-          {(["auto", "center", "manual"] as const).map((mode) => (
-            <Button
-              key={mode}
-              size="xs"
-              variant={item.crop.mode === mode ? "secondary" : "ghost"}
-              disabled={reframing}
-              onClick={() => {
-                if (mode === "auto" && item.crop.mode !== "auto") void recompute();
-                if (mode === "center") useEditor.getState().apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "center", keyframes: [] } }));
-                if (mode === "manual") {
-                  setManual({});
-                  commit();
-                }
-              }}
-            >
-              {mode === "auto" ? "Auto" : mode === "center" ? "Centre" : "Manuel"}
-            </Button>
-          ))}
-        </div>
-        {item.crop.mode === "auto" && (
-          <Button size="xs" variant="outline" className="w-full" onClick={() => void recompute()} disabled={reframing}>
-            {reframing ? <Loader2Icon className="animate-spin" /> : <ScanFaceIcon />}
-            {reframing ? "Analyse en cours…" : "Recalculer le cadrage"}
-          </Button>
-        )}
+      <NumberSlider
+        label="Volume"
+        display={`${Math.round(item.volume * 100)} %`}
+        value={item.volume}
+        min={0}
+        max={2}
+        step={0.05}
+        onChange={(volume) => live<VideoItem>(item.id, { volume })}
+      />
+      <Field
+        label="Cadrage 9:16"
+        aside={
+          item.crop.mode === "auto" && (
+            <IconAction label="Recalculer le cadrage" onPress={() => void recompute()} isDisabled={reframing}>
+              {reframing ? <Spinner size="sm" color="current" /> : <ArrowsRotateRight />}
+            </IconAction>
+          )
+        }
+      >
+        <Segment
+          size="sm"
+          aria-label="Cadrage 9:16"
+          selectedKey={item.crop.mode}
+          isDisabled={reframing}
+          onSelectionChange={(key) => {
+            if (key === item.crop.mode) return;
+            if (key === "auto") void recompute();
+            if (key === "center") useEditor.getState().apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "center", keyframes: [] } }));
+            if (key === "manual") {
+              setManual({});
+              commit();
+            }
+          }}
+        >
+          <Segment.Item id="auto">Auto</Segment.Item>
+          <Segment.Item id="center">Centre</Segment.Item>
+          <Segment.Item id="manual">Manuel</Segment.Item>
+        </Segment>
       </Field>
       {item.crop.mode === "auto" && (
-        <Field label="Plan sous la tête de lecture" value={shots.length ? `${shots.indexOf(shot) + 1} / ${shots.length}` : undefined}>
-          <div className="grid grid-cols-3 gap-1">
+        <Field
+          label="Plan sous la tête de lecture"
+          aside={
+            shots.length ? (
+              <span className="text-xs text-muted tabular-nums">
+                {shots.indexOf(shot) + 1} / {shots.length}
+              </span>
+            ) : undefined
+          }
+        >
+          <Segment
+            size="sm"
+            aria-label="Mise en page du plan"
+            selectedKey={shot.layout}
+            isDisabled={reframing}
+            onSelectionChange={(key) =>
+              useEditor
+                .getState()
+                .apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: withShotLayout(item.crop, sourceTime, key as ShotLayout) }))
+            }
+          >
             {shotLayouts.map((layout) => (
-              <Button
-                key={layout}
-                size="xs"
-                variant={shot.layout === layout ? "secondary" : "ghost"}
-                disabled={reframing}
-                onClick={() =>
-                  useEditor
-                    .getState()
-                    .apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: withShotLayout(item.crop, sourceTime, layout) }))
-                }
-              >
+              <Segment.Item key={layout} id={layout}>
                 {LAYOUT_LABELS[layout]}
-              </Button>
+              </Segment.Item>
             ))}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Recadré : suit le visage · Écran partagé : facecam en haut, contenu en bas · Plein cadre : image entière sur fond
-            flouté.
-          </p>
+          </Segment>
+          <p className="text-xs text-muted">{LAYOUT_HINTS[shot.layout]}</p>
         </Field>
       )}
       {item.crop.mode === "manual" && (
         <>
-          <Field label="Position horizontale" value={`${Math.round(current.x * 100)} %`}>
-            <NumberSlider value={current.x} min={0} max={1} step={0.005} onChange={(x) => setManual({ x })} />
-          </Field>
-          <Field label="Zoom" value={`${current.zoom.toFixed(2)}×`}>
-            <NumberSlider value={current.zoom} min={1} max={3} step={0.01} onChange={(zoom) => setManual({ zoom })} />
-          </Field>
+          <NumberSlider
+            label="Position horizontale"
+            display={`${Math.round(current.x * 100)} %`}
+            value={current.x}
+            min={0}
+            max={1}
+            step={0.005}
+            onChange={(x) => setManual({ x })}
+          />
+          <NumberSlider
+            label="Zoom"
+            display={`${current.zoom.toFixed(2)}×`}
+            value={current.zoom}
+            min={1}
+            max={3}
+            step={0.01}
+            onChange={(zoom) => setManual({ zoom })}
+          />
         </>
       )}
     </>
@@ -230,69 +288,93 @@ function VideoFields({ item }: { item: VideoItem }) {
 
 function AudioFields({ item }: { item: AudioItem }) {
   return (
-    <Field label="Volume" value={`${Math.round(item.volume * 100)} %`}>
-      <NumberSlider value={item.volume} min={0} max={2} step={0.05} onChange={(volume) => live<AudioItem>(item.id, { volume })} />
-    </Field>
+    <NumberSlider
+      label="Volume"
+      display={`${Math.round(item.volume * 100)} %`}
+      value={item.volume}
+      min={0}
+      max={2}
+      step={0.05}
+      onChange={(volume) => live<AudioItem>(item.id, { volume })}
+    />
   );
 }
 
 const COLORS = ["#ffffff", "#000000", "#facc15", "#22d3ee", "#f43f5e"];
+/** Matches no swatch: how the pickers show "nothing selected". */
+const NO_COLOR = "#00000000";
+
+function Swatches({ label, value, onChange }: { label: string; value: string | null; onChange: (c: string) => void }) {
+  return (
+    <ColorSwatchPicker
+      aria-label={label}
+      size="sm"
+      value={value ?? NO_COLOR}
+      onChange={(c) => onChange(c.toString("hex").toLowerCase())}
+    >
+      {COLORS.map((c) => (
+        <ColorSwatchPicker.Item key={c} color={c}>
+          <ColorSwatchPicker.Swatch />
+          <ColorSwatchPicker.Indicator />
+        </ColorSwatchPicker.Item>
+      ))}
+    </ColorSwatchPicker>
+  );
+}
 
 function TextFields({ item }: { item: TextItem }) {
   const style = (patch: Partial<TextItem["style"]>) => live<TextItem>(item.id, { style: { ...item.style, ...patch } });
+  const pick = (patch: Partial<TextItem["style"]>) => {
+    style(patch);
+    commit();
+  };
   return (
     <>
       <Field label="Texte">
-        <textarea
-          value={item.text}
+        <TextArea
+          aria-label="Texte"
+          variant="secondary"
+          fullWidth
           rows={3}
+          value={item.text}
           onChange={(e) => live<TextItem>(item.id, { text: e.target.value })}
           onBlur={commit}
-          className="w-full resize-none rounded-lg border bg-transparent p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="resize-none"
         />
       </Field>
-      <Field label="Taille" value={item.style.fontSize}>
-        <NumberSlider value={item.style.fontSize} min={32} max={160} step={1} onChange={(fontSize) => style({ fontSize })} />
-      </Field>
-      <Field label="Position verticale" value={`${Math.round(item.y * 100)} %`}>
-        <NumberSlider value={item.y} min={0.05} max={0.95} step={0.005} onChange={(y) => live<TextItem>(item.id, { y })} />
-      </Field>
+      <NumberSlider
+        label="Taille"
+        display={item.style.fontSize}
+        value={item.style.fontSize}
+        min={32}
+        max={160}
+        step={1}
+        onChange={(fontSize) => style({ fontSize })}
+      />
+      <NumberSlider
+        label="Position verticale"
+        display={`${Math.round(item.y * 100)} %`}
+        value={item.y}
+        min={0.05}
+        max={0.95}
+        step={0.005}
+        onChange={(y) => live<TextItem>(item.id, { y })}
+      />
       <Field label="Couleur">
-        <div className="flex gap-1.5">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              aria-label={c}
-              className={cn("size-6 rounded-full ring-1 ring-white/20", item.style.color === c && "ring-2 ring-white")}
-              style={{ background: c }}
-              onClick={() => {
-                style({ color: c });
-                commit();
-              }}
-            />
-          ))}
-        </div>
+        <Swatches label="Couleur du texte" value={item.style.color} onChange={(color) => pick({ color })} />
       </Field>
       <Field label="Fond">
-        <div className="flex gap-1.5">
-          {[null, ...COLORS].map((c) => (
-            <button
-              key={c ?? "none"}
-              type="button"
-              aria-label={c ?? "Aucun fond"}
-              className={cn(
-                "size-6 rounded-md ring-1 ring-white/20",
-                item.style.background === c && "ring-2 ring-white",
-                !c && "bg-[repeating-linear-gradient(45deg,transparent_0_4px,rgba(255,255,255,.25)_4px_6px)]",
-              )}
-              style={c ? { background: c } : undefined}
-              onClick={() => {
-                style({ background: c });
-                commit();
-              }}
-            />
-          ))}
+        <div className="flex items-center gap-2">
+          <Swatches label="Couleur du fond" value={item.style.background} onChange={(background) => pick({ background })} />
+          <ToggleButton
+            isIconOnly
+            size="sm"
+            aria-label="Sans fond"
+            isSelected={item.style.background === null}
+            onChange={() => pick({ background: null })}
+          >
+            <Ban />
+          </ToggleButton>
         </div>
       </Field>
     </>

@@ -29,8 +29,8 @@ export function Preview({ ref }: { ref: RefObject<PlayerRef | null> }) {
   }, [ref, setPlayhead, timeline.fps]);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-center bg-black/40 p-4">
-      <div className="aspect-[9/16] h-full max-h-full overflow-hidden rounded-lg shadow-2xl ring-1 ring-white/10">
+    <div className="flex min-w-0 flex-1 items-center justify-center bg-black/30 p-6">
+      <div className="aspect-[9/16] h-full max-h-full overflow-hidden rounded-xl shadow-overlay ring-1 ring-border">
         <Player
           ref={ref}
           component={ShortComposition}

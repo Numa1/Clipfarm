@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { JetBrains_Mono, Manrope } from "next/font/google";
+import { Toast } from "@heroui/react";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
 
@@ -21,10 +20,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="fr" className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}>
+    <html
+      lang="fr"
+      data-theme="dark"
+      className={`${manrope.variable} ${jetbrainsMono.variable} dark h-full font-sans antialiased`}
+    >
       <body className="flex min-h-full flex-col bg-background text-foreground">
-        <TooltipProvider>{children}</TooltipProvider>
-        <Toaster theme="dark" position="bottom-right" />
+        {children}
+        <Toast.Provider placement="bottom end" />
       </body>
     </html>
   );

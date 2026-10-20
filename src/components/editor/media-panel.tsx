@@ -1,13 +1,14 @@
 "use client";
 
-import { Loader2Icon, MusicIcon, PlusIcon, TypeIcon, UploadIcon } from "lucide-react";
+import { ArrowUpFromLine, MusicNote, Plus, Text } from "@gravity-ui/icons";
+import { ListView } from "@heroui-pro/react";
+import { Button, Spinner, toast } from "@heroui/react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { produce } from "immer";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { fetchJson } from "@/lib/format";
 import { addItem } from "@/timeline/ops";
+import { IconAction } from "./icon-action";
 import { useEditor } from "./store";
 
 type Sfx = { name: string; src: string };
@@ -74,7 +75,7 @@ export function MediaPanel() {
       });
       select(id);
     } catch (e) {
-      toast.error(String(e));
+      toast.danger(String(e));
     }
   };
 
@@ -84,27 +85,28 @@ export function MediaPanel() {
       await fetchJson("/api/sfx", { method: "POST", headers: { "x-filename": encodeURIComponent(file.name) }, body: file });
       reload();
     } catch (e) {
-      toast.error(String(e));
+      toast.danger(String(e));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r p-3 md:flex">
-      <section>
-        <h3 className="mb-2 text-xs font-medium text-muted-foreground">Texte</h3>
-        <Button variant="outline" size="sm" className="w-full justify-start" onClick={addText}>
-          <TypeIcon /> Ajouter un texte
+    <aside className="hidden w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border p-3 md:flex">
+      <section className="flex flex-col gap-2">
+        <h3 className="px-1 text-xs font-semibold text-muted">Texte</h3>
+        <Button variant="tertiary" size="sm" fullWidth onPress={addText}>
+          <Text />
+          Ajouter un texte
         </Button>
       </section>
 
-      <section>
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-xs font-medium text-muted-foreground">SFX / Musique</h3>
-          <Button variant="ghost" size="icon-xs" onClick={() => inputRef.current?.click()} aria-label="Importer un son">
-            {busy ? <Loader2Icon className="animate-spin" /> : <UploadIcon />}
-          </Button>
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-xs font-semibold text-muted">Sons et musique</h3>
+          <IconAction label="Importer un son" onPress={() => inputRef.current?.click()} isPending={busy}>
+            {busy ? <Spinner size="sm" color="current" /> : <ArrowUpFromLine />}
+          </IconAction>
           <input
             ref={inputRef}
             type="file"
@@ -117,25 +119,30 @@ export function MediaPanel() {
             }}
           />
         </div>
-        {sfx.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Importe des sons (whoosh, pop, musique…) ou dépose-les dans library/sfx.</p>
-        ) : (
-          <ul className="space-y-1">
-            {sfx.map((s) => (
-              <li key={s.src}>
-                <button
-                  type="button"
-                  onClick={() => addSfx(s)}
-                  className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
-                >
-                  <MusicIcon className="size-3.5 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
-                  <PlusIcon className="size-3.5 opacity-0 group-hover:opacity-100" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ListView
+          aria-label="Sons"
+          variant="secondary"
+          items={sfx}
+          onAction={(key) => {
+            const s = sfx.find((x) => x.src === key);
+            if (s) void addSfx(s);
+          }}
+          renderEmptyState={() => (
+            <p className="px-1 text-xs text-muted">Importe des sons (whoosh, pop, musique…) ou dépose-les dans library/sfx.</p>
+          )}
+        >
+          {(s) => (
+            <ListView.Item id={s.src} textValue={s.name}>
+              <ListView.ItemContent>
+                <MusicNote className="size-3.5 shrink-0 text-muted" />
+                <ListView.Title className="text-xs font-normal">{s.name}</ListView.Title>
+              </ListView.ItemContent>
+              <ListView.ItemAction>
+                <Plus className="size-3.5 text-muted" />
+              </ListView.ItemAction>
+            </ListView.Item>
+          )}
+        </ListView>
       </section>
     </aside>
   );
