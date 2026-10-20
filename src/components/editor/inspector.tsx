@@ -18,6 +18,7 @@ import {
 import { useParams } from "next/navigation";
 import type { ComponentType, ReactNode, SVGProps } from "react";
 import { formatTime } from "@/lib/format";
+import { applyCommand } from "@/timeline/commands";
 import { cropAt, shotAt, withShotLayout } from "@/timeline/crop";
 import { findItem, itemDuration, removeItem, updateItem } from "@/timeline/ops";
 import { type AudioItem, type Item, type ShotLayout, shotLayouts, type TextItem, type VideoItem } from "@/timeline/schema";
@@ -229,7 +230,7 @@ function VideoFields({ item }: { item: VideoItem }) {
   /** Recompute this clip only: back to auto locally (so the result merges in), save, queue the job. */
   const recompute = async () => {
     const st = useEditor.getState();
-    st.apply((tl) => updateItem<VideoItem>(tl, item.id, { crop: { mode: "auto", keyframes: [] } }));
+    st.apply((tl) => applyCommand(tl, { type: "setCrop", itemId: item.id, crop: { mode: "auto", keyframes: [] } }));
     await fetch(`/api/projects/${projectId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },

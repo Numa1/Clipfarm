@@ -1,4 +1,4 @@
-import type { Crop, CropKeyframe, Rect, Shot, ShotLayout } from "./schema";
+import type { Crop, CropKeyframe, Rect, Shot, ShotLayout, Timeline } from "./schema";
 
 const CENTER: CropKeyframe = { t: 0, x: 0.5, y: 0.5, zoom: 1 };
 
@@ -143,4 +143,24 @@ export function fitTransform(src: Size, out: Size): Box {
   const width = src.width * s;
   const height = src.height * s;
   return { width, height, left: (out.width - width) / 2, top: (out.height - height) / 2 };
+}
+
+/** Take shots computed by the worker for clips that still exist locally and are still in auto mode. */
+export function mergeCrops(local: Timeline, remote: Timeline): Timeline {
+  const crops = new Map(
+    remote.tracks.flatMap((t) => t.items).flatMap((i) => (i.type === "video" ? [[i.id, i.crop] as const] : [])),
+  );
+  return {
+    ...local,
+    tracks: local.tracks.map((t) => ({
+      ...t,
+      items: t.items.map((i) => {
+        const remote = crops.get(i.id);
+        // Only clips still in auto locally (a clip switched to center/manual meanwhile keeps it).
+        return i.type === "video" && i.crop.mode === "auto" && remote?.mode === "auto" && remote.shots?.length
+          ? { ...i, crop: remote }
+          : i;
+      }),
+    })),
+  };
 }

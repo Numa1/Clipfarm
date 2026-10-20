@@ -10,8 +10,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { fetchJson } from "@/lib/format";
 import type { Job, Project } from "@/server/db/schema";
+import { mergeCrops } from "@/timeline/crop";
 import { itemEnd, removeItem, splitItem } from "@/timeline/ops";
-import { parseTimeline, type Timeline } from "@/timeline/schema";
+import { parseTimeline } from "@/timeline/schema";
 import { ExportButton, ProjectTitle, SaveIndicator, type SaveStatus } from "./editor-chrome";
 import { IconAction } from "./icon-action";
 import { Inspector } from "./inspector";
@@ -309,24 +310,4 @@ async function retryReframe(jobId: string) {
   const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
   if (res.ok) useEditor.getState().setReframeJob(((await res.json()) as Job).id);
   else toast.danger("Impossible de relancer le recadrage", { description: await res.text() });
-}
-
-/** Take shots computed by the worker for clips that still exist locally and are still in auto mode. */
-function mergeCrops(local: Timeline, remote: Timeline): Timeline {
-  const crops = new Map(
-    remote.tracks.flatMap((t) => t.items).flatMap((i) => (i.type === "video" ? [[i.id, i.crop] as const] : [])),
-  );
-  return {
-    ...local,
-    tracks: local.tracks.map((t) => ({
-      ...t,
-      items: t.items.map((i) => {
-        const remote = crops.get(i.id);
-        // Only clips still in auto locally (a clip switched to center/manual meanwhile keeps it).
-        return i.type === "video" && i.crop.mode === "auto" && remote?.mode === "auto" && remote.shots?.length
-          ? { ...i, crop: remote }
-          : i;
-      }),
-    })),
-  };
 }
