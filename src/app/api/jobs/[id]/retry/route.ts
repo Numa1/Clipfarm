@@ -1,10 +1,10 @@
+import { httpError, route } from "@/server/api";
 import { getDb } from "@/server/db";
 import { retryJob } from "@/server/jobs";
 
 /** Queue a failed or cancelled job again, with the same payload. */
-export async function POST(_req: Request, ctx: RouteContext<"/api/jobs/[id]/retry">) {
-  const { id } = await ctx.params;
+export const POST = route({ path: "/api/jobs/[id]/retry" }, ({ params: { id } }) => {
   const res = retryJob(getDb(), id);
-  if ("error" in res) return Response.json({ error: res.error }, { status: res.status });
+  if ("error" in res) throw httpError(res.status, res.error);
   return Response.json(res.job, { status: 201 });
-}
+});

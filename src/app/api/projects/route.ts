@@ -1,12 +1,13 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { connection } from "next/server";
 import { z } from "zod";
+import { httpError, route } from "@/server/api";
 import { getDb } from "@/server/db";
 import { costSelect, shareOf, toCost } from "@/server/costs";
 import { projects, sources } from "@/server/db/schema";
 import { createProject } from "@/server/projects";
 
-export async function GET() {
+export const GET = route({}, async () => {
   await connection();
   const rows = getDb()
     .select({
@@ -30,7 +31,7 @@ export async function GET() {
       cost: p.sourceId ? shareOf(toCost({ costCalls, costTokens, costOutputTokens, costUsd }), momentCount) : null,
     })),
   );
-}
+});
 
 const createSchema = z.union([
   z.object({ momentId: z.string() }),
@@ -38,8 +39,8 @@ const createSchema = z.union([
 ]);
 
 /** Create a project pre-cut on a suggested moment (or an arbitrary segment), then queue auto-reframe. */
-export async function POST(request: Request) {
-  const res = createProject(getDb(), createSchema.parse(await request.json()));
-  if ("error" in res) return Response.json({ error: res.error }, { status: res.status });
+export const POST = route({ body: createSchema, idempotent: true }, ({ body }) => {
+  const res = createProject(getDb(), body);
+  if ("error" in res) throw httpError(res.status, res.error);
   return Response.json({ id: res.project.id }, { status: 201 });
-}
+});
