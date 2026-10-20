@@ -38,6 +38,8 @@ export function Editor() {
   const setReframeJob = useEditor((s) => s.setReframeJob);
   const reframing = !!reframeJobId;
   const [exportJob, setExportJob] = useState<Job | null>(null);
+  // Latest startExport for the retry action of a failed-export toast (created inside a poll effect).
+  const startExportRef = useRef(async () => {});
   const [lastExport, setLastExport] = useState<string | null>(null);
   const { timeline, load, undo, redo, past, future, revision } = useEditor();
   // Presentation only: last revision the server acknowledged, and the export whose success was shown.
@@ -64,7 +66,11 @@ export function Editor() {
       if (!job || job.status === "queued" || job.status === "running") return;
       if (job.status === "error") {
         setReframeJob(null);
-        toast.danger("Recadrage auto échoué", { description: job.error ?? "Erreur inconnue" });
+        toast.danger("Recadrage auto échoué", {
+          description: job.error ?? "Erreur inconnue",
+          timeout: 0,
+          actionProps: { children: "Réessayer", onPress: () => retryReframe(job.id) },
+        });
         return;
       }
       if (job.status === "cancelled") {
@@ -111,7 +117,14 @@ export function Editor() {
       if (j.status === "done") {
         setLastExport(String(j.result?.output));
         toast.success("Export terminé");
-      } else if (j.status === "error") toast.danger("Export échoué", { description: j.error ?? undefined });
+      } else if (j.status === "error") {
+        toast.danger("Export échoué", {
+          description: j.error ?? undefined,
+          timeout: 0,
+          // A fresh export (not a clone of the job): it renders the edits made since.
+          actionProps: { children: "Réessayer", onPress: () => startExportRef.current() },
+        });
+      }
       else if (j.status === "cancelled") toast.info("Export arrêté");
     }, 1000);
     return () => clearInterval(t);
@@ -134,6 +147,10 @@ export function Editor() {
     });
     setExportJob(await fetchJson<Job>(`/api/projects/${id}/render`, { method: "POST" }));
   };
+
+  useEffect(() => {
+    startExportRef.current = startExport;
+  });
 
   /** Stop a worker job; the polls above pick up the "cancelled" status and clean up. */
   const cancelJob = async (jobId: string) => {
@@ -271,6 +288,13 @@ export function Editor() {
     </MotionConfig>
   );
 }
+/** Queue a failed auto-reframe again; the editor polls the new job like the first one. */
+async function retryReframe(jobId: string) {
+  const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+  if (res.ok) useEditor.getState().setReframeJob(((await res.json()) as Job).id);
+  else toast.danger("Impossible de relancer le recadrage", { description: await res.text() });
+}
+
 /** Take shots computed by the worker for clips that still exist locally and are still in auto mode. */
 function mergeCrops(local: Timeline, remote: Timeline): Timeline {
   const crops = new Map(

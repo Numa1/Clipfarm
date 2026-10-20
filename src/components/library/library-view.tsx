@@ -30,7 +30,13 @@ import { MomentCard } from "./moment-card";
 import { STATUS_DETAIL, StatusChip } from "./status-chip";
 
 type SourceRow = Source & { momentCount: number };
-type SourceDetail = Source & { moments: Moment[]; activeJob: Job | null };
+type SourceDetail = Source & { moments: Moment[]; activeJob: Job | null; lastJob: Job | null };
+
+const STEP_LABEL: Partial<Record<Job["type"], string>> = {
+  ingest: "La préparation de la vidéo",
+  transcribe: "La transcription",
+  moments: "La recherche des moments",
+};
 type Upload = { name: string; size: number; progress: number; done?: boolean };
 
 // Entrance stagger: CSS animations only run on mount, so polling re-renders never replay them.
@@ -227,6 +233,7 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
   const [creating, setCreating] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
@@ -243,6 +250,17 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
       reload();
     } finally {
       setStopping(false);
+    }
+  };
+
+  const retryJob = async (jobId: string) => {
+    setRetrying(true);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      if (!res.ok) toast.danger("Impossible de réessayer", { description: await res.text() });
+      reload();
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -293,15 +311,38 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
   };
 
   if (!detail) return <PanelSkeleton />;
-  const { activeJob } = detail;
+  const { activeJob, lastJob } = detail;
+  // The last step of the pipeline failed or was stopped (and nothing runs since): offer a retry.
+  const failedJob = !activeJob && lastJob && (lastJob.status === "error" || lastJob.status === "cancelled") ? lastJob : null;
 
   return (
     <div className="flex animate-fade-in flex-col gap-4">
-      {detail.error && (
-        <p className="flex animate-fade-in items-start gap-2 rounded-xl bg-danger-soft p-3 font-mono text-xs text-danger-soft-foreground">
-          <CircleExclamationFill className="mt-px size-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 break-words">{detail.error}</span>
-        </p>
+      {failedJob ? (
+        <div
+          role="alert"
+          className="flex animate-fade-in items-start gap-3 rounded-xl bg-danger-soft p-3 text-danger-soft-foreground"
+        >
+          <CircleExclamationFill className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <p className="text-sm font-medium">
+              {STEP_LABEL[failedJob.type] ?? "L’étape"}{" "}
+              {failedJob.status === "cancelled" ? "a été arrêtée" : "a échoué"}
+              {failedJob.type === "moments" && detail.moments.length > 0 && " · les moments précédents sont conservés"}
+            </p>
+            {failedJob.error && <p className="min-w-0 break-words font-mono text-xs">{failedJob.error}</p>}
+          </div>
+          <Button size="sm" variant="danger" onPress={() => retryJob(failedJob.id)} isPending={retrying}>
+            <ArrowsRotateRight />
+            Réessayer
+          </Button>
+        </div>
+      ) : (
+        detail.error && (
+          <p className="flex animate-fade-in items-start gap-2 rounded-xl bg-danger-soft p-3 font-mono text-xs text-danger-soft-foreground">
+            <CircleExclamationFill className="mt-px size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 break-words">{detail.error}</span>
+          </p>
+        )
       )}
 
       {activeJob && (

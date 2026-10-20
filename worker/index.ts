@@ -1,7 +1,14 @@
-import { eq } from "drizzle-orm";
 import { getDb } from "@/server/db";
-import { sources, type Job } from "@/server/db/schema";
-import { claimNextJob, failJob, finishJob, isJobCancelled, requeueStaleJobs, setJobProgress } from "@/server/jobs";
+import type { Job } from "@/server/db/schema";
+import {
+  claimNextJob,
+  failJob,
+  finishJob,
+  isJobCancelled,
+  markSourceFailed,
+  requeueStaleJobs,
+  setJobProgress,
+} from "@/server/jobs";
 import { ingest } from "./handlers/ingest";
 import { findMoments } from "./handlers/moments";
 import { reframe, reframeSetupProblem } from "./handlers/reframe";
@@ -91,10 +98,7 @@ async function runJob(job: Job) {
       : e instanceof Error
         ? e.message
         : String(e);
-    if (failJob(db, job.id, message)) {
-      const sourceId = (job.payload as { sourceId?: string }).sourceId;
-      if (sourceId) db.update(sources).set({ status: "error", error: message }).where(eq(sources.id, sourceId)).run();
-    }
+    if (failJob(db, job.id, message)) markSourceFailed(db, job, message);
     console.error(`✖ ${job.type} ${job.id}: ${message}`);
   } finally {
     clearInterval(watch);

@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import { z } from "zod";
-import { and, desc, eq, inArray, like } from "drizzle-orm";
+import { desc, eq, like } from "drizzle-orm";
 import { getDb } from "@/server/db";
 import { jobs, moments, sources } from "@/server/db/schema";
-import { cancelSourceJobs } from "@/server/jobs";
+import { activeJobsFor, cancelSourceJobs } from "@/server/jobs";
 import { sourceDir } from "@/server/paths";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">) {
@@ -12,12 +12,16 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">)
   const source = db.select().from(sources).where(eq(sources.id, id)).get();
   if (!source) return Response.json({ error: "not found" }, { status: 404 });
   const list = db.select().from(moments).where(eq(moments.sourceId, id)).orderBy(desc(moments.score)).all();
-  const job = db
-    .select()
-    .from(jobs)
-    .where(and(inArray(jobs.status, ["queued", "running"]), like(jobs.payload, `%"sourceId":"${id}"%`)))
-    .get();
-  return Response.json({ ...source, moments: list, activeJob: job ?? null });
+  const activeJob = activeJobsFor(db, { sourceId: id }).at(-1) ?? null;
+  // Most recent job of the pipeline: when it failed or was cancelled, the UI offers a retry.
+  const lastJob =
+    db
+      .select()
+      .from(jobs)
+      .where(like(jobs.payload, `%"sourceId":"${id}"%`))
+      .orderBy(desc(jobs.createdAt))
+      .get() ?? null;
+  return Response.json({ ...source, moments: list, activeJob, lastJob });
 }
 
 const patchSchema = z.object({ creator: z.string().trim().max(80).nullable() });

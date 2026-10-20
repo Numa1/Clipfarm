@@ -15,6 +15,8 @@ import {
   failJob,
   finishJob,
   isJobCancelled,
+  markSourceFailed,
+  retryJob,
 } from "./jobs";
 
 let db: DB;
@@ -60,5 +62,59 @@ describe("cancelSourceJobs", () => {
     cancelSourceJobs(db, "src1");
     expect(isJobCancelled(db, mine.id)).toBe(true);
     expect(isJobCancelled(db, other.id)).toBe(false);
+  });
+});
+
+const addMoment = () =>
+  db.insert(schema.moments).values({ id: "m1", sourceId: "src1", start: 0, end: 30, hook: "h", reason: "r", score: 50 }).run();
+
+describe("markSourceFailed", () => {
+  it("keeps a source with moments ready when a moment re-run fails", () => {
+    addMoment();
+    const job = enqueueJob(db, "moments", { sourceId: "src1" });
+    markSourceFailed(db, job, "Claude : limite atteinte");
+    expect(sourceOf()).toMatchObject({ status: "ready", error: null });
+  });
+
+  it("puts the source in error when the pipeline cannot go on", () => {
+    const moments = enqueueJob(db, "moments", { sourceId: "src1" });
+    markSourceFailed(db, moments, "boom");
+    expect(sourceOf()).toMatchObject({ status: "error", error: "boom" });
+    const ingest = enqueueJob(db, "ingest", { sourceId: "src1" });
+    addMoment();
+    markSourceFailed(db, ingest, "ffmpeg");
+    expect(sourceOf()).toMatchObject({ status: "error", error: "ffmpeg" });
+  });
+
+  it("applies the same rule when a moment re-run is cancelled", () => {
+    addMoment();
+    const job = enqueueJob(db, "moments", { sourceId: "src1" });
+    cancelJob(db, job.id);
+    expect(sourceOf()).toMatchObject({ status: "ready", error: null });
+  });
+});
+
+describe("retryJob", () => {
+  it("queues a copy of a failed job and resets the source status", () => {
+    const job = enqueueJob(db, "transcribe", { sourceId: "src1" });
+    claimNextJob(db);
+    failJob(db, job.id, "whisper");
+    markSourceFailed(db, job, "whisper");
+    const res = retryJob(db, job.id);
+    expect("job" in res && res.job).toMatchObject({ type: "transcribe", status: "queued", payload: { sourceId: "src1" } });
+    expect(sourceOf()).toMatchObject({ status: "transcribing", error: null });
+  });
+
+  it("refuses jobs that did not fail, and retries while the pipeline is busy", () => {
+    const done = enqueueJob(db, "render", { projectId: "p1" });
+    claimNextJob(db);
+    finishJob(db, done.id);
+    expect(retryJob(db, done.id)).toMatchObject({ status: 409 });
+
+    const failed = enqueueJob(db, "render", { projectId: "p1" });
+    cancelJob(db, failed.id);
+    enqueueJob(db, "reframe", { projectId: "p1" });
+    expect(retryJob(db, failed.id)).toMatchObject({ status: 409 });
+    expect(retryJob(db, "nope")).toMatchObject({ status: 404 });
   });
 });

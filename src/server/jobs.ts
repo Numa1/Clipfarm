@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, like } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { DB } from "./db";
-import { jobs, sources, type Job, type JobType } from "./db/schema";
+import { jobs, moments, sources, type Job, type JobType, type SourceStatus } from "./db/schema";
 
 export function enqueueJob(db: DB, type: JobType, payload: Record<string, unknown>): Job {
   return db.insert(jobs).values({ id: nanoid(10), type, payload }).returning().get();
@@ -66,9 +66,63 @@ export function cancelJob(db: DB, id: string): Job | null {
     .returning()
     .get();
   if (!job) return null;
-  const sourceId = (job.payload as { sourceId?: string }).sourceId;
-  if (sourceId) db.update(sources).set({ status: "error", error: CANCELLED_MESSAGE }).where(eq(sources.id, sourceId)).run();
+  markSourceFailed(db, job, CANCELLED_MESSAGE);
   return job;
+}
+
+/**
+ * Source state after one of its jobs failed or was cancelled. A failed re-run of the moment search
+ * leaves a source that already has moments usable ("ready"): the failure stays on the job, where
+ * the UI shows it with a retry. Any other failure blocks the pipeline: the source is in error.
+ */
+export function markSourceFailed(db: DB, job: Job, message: string) {
+  const sourceId = (job.payload as { sourceId?: string }).sourceId;
+  if (!sourceId) return;
+  const usable =
+    job.type === "moments" &&
+    !!db.select({ id: moments.id }).from(moments).where(eq(moments.sourceId, sourceId)).limit(1).get();
+  db.update(sources)
+    .set(usable ? { status: "ready", error: null } : { status: "error", error: message })
+    .where(eq(sources.id, sourceId))
+    .run();
+}
+
+/** Status a source shows while the given step of its pipeline runs again. */
+const RETRY_STATUS: Partial<Record<JobType, SourceStatus>> = {
+  ingest: "uploaded",
+  transcribe: "transcribing",
+  moments: "analyzing",
+};
+
+/** Queued or running jobs of a source, or of a project. */
+export function activeJobsFor(db: DB, key: { sourceId: string } | { projectId: string }) {
+  const [field, id] = "sourceId" in key ? ["sourceId", key.sourceId] : ["projectId", key.projectId];
+  return db
+    .select()
+    .from(jobs)
+    .where(and(inArray(jobs.status, ["queued", "running"]), like(jobs.payload, `%"${field}":"${id}"%`)))
+    .orderBy(desc(jobs.createdAt))
+    .all();
+}
+
+/**
+ * Queue a failed or cancelled job again (same type and payload). Refused while another job runs for
+ * the same source or project, so a retry never races the pipeline.
+ */
+export function retryJob(db: DB, id: string): { job: Job } | { error: string; status: number } {
+  const old = db.select().from(jobs).where(eq(jobs.id, id)).get();
+  if (!old) return { error: "not found", status: 404 };
+  if (old.status !== "error" && old.status !== "cancelled") return { error: `job is ${old.status}`, status: 409 };
+  const { sourceId, projectId } = old.payload as { sourceId?: string; projectId?: string };
+  const key = sourceId ? { sourceId } : projectId ? { projectId } : null;
+  if (key && activeJobsFor(db, key).length) return { error: "another job is already running", status: 409 };
+  if (sourceId && !db.select({ id: sources.id }).from(sources).where(eq(sources.id, sourceId)).get()) {
+    return { error: "source deleted", status: 410 };
+  }
+  const job = enqueueJob(db, old.type, old.payload);
+  const status = RETRY_STATUS[old.type];
+  if (sourceId && status) db.update(sources).set({ status, error: null }).where(eq(sources.id, sourceId)).run();
+  return { job };
 }
 
 /** Cancel every queued or running job of a source (before deleting it). */
