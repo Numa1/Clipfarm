@@ -1,5 +1,7 @@
-import { sql } from "drizzle-orm";
-import type { SourceCost } from "@/lib/cost";
+import { eq, sql } from "drizzle-orm";
+import { shareByWeight, type SourceCost } from "@/lib/cost";
+import type { DB } from "./db";
+import { moments, transcripts } from "./db/schema";
 
 export { shareOf, type SourceCost } from "@/lib/cost";
 
@@ -21,4 +23,29 @@ type CostRow = { [K in keyof ReturnType<typeof costSelect>]: number };
 
 export function toCost(row: CostRow): SourceCost {
   return { calls: row.costCalls, tokens: row.costTokens, outputTokens: row.costOutputTokens, costUsd: row.costUsd };
+}
+
+/**
+ * Splits a source's analysis cost across its moments by how many transcript words fall in each one,
+ * rather than splitting it equally: a moment's weight is the number of words whose midpoint lands in
+ * its [start, end) range. Falls back to an equal split (via `shareByWeight`) when the source has no
+ * transcript, or no word midpoint lands in any moment.
+ */
+export function momentCostSharesByWords(db: DB, sourceId: string, cost: SourceCost): { momentId: string; cost: SourceCost }[] {
+  const sourceMoments = db.select().from(moments).where(eq(moments.sourceId, sourceId)).all();
+  if (sourceMoments.length === 0) return [];
+
+  const words = db.select().from(transcripts).where(eq(transcripts.sourceId, sourceId)).get()?.json.words ?? [];
+
+  const weights = sourceMoments.map((moment) => {
+    let count = 0;
+    for (const word of words) {
+      const mid = (word.start + word.end) / 2;
+      if (mid >= moment.start && mid < moment.end) count++;
+    }
+    return count;
+  });
+
+  const shares = shareByWeight(cost, weights);
+  return sourceMoments.map((moment, i) => ({ momentId: moment.id, cost: shares[i] }));
 }

@@ -12,11 +12,15 @@ import type { SourceCost } from "@/lib/cost";
 export function CostChip({
   cost,
   share = false,
+  weighted = false,
   showUnknown = false,
   size = "sm",
 }: {
   cost: SourceCost | null;
   share?: boolean;
+  /** When `share` is set, whether that share was computed pro rata (e.g. by word count) rather than
+   *  split equally between the source's moments. Purely informational: only changes the tooltip wording. */
+  weighted?: boolean;
   /** Videos analysed before cost tracking have no cost: hidden unless asked. */
   showUnknown?: boolean;
   size?: "sm" | "md";
@@ -41,7 +45,9 @@ export function CostChip({
             </p>
             <p className="text-muted">
               {share
-                ? "Une analyse trouve tous les moments d’une vidéo : son coût est réparti entre eux."
+                ? weighted
+                  ? "Une analyse trouve tous les moments d’une vidéo : son coût est réparti entre eux au prorata de leur durée de parole."
+                  : "Une analyse trouve tous les moments d’une vidéo : son coût est réparti entre eux."
                 : `${cost.calls} appel${cost.calls > 1 ? "s" : ""} à Claude pour l’analyse.`}{" "}
               Prix équivalent API, non facturé avec un abonnement. Transcription, recadrage et rendu tournent en local.
             </p>
