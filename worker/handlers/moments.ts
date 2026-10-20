@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { DB } from "@/server/db";
-import { moments, sources, transcripts, type Word } from "@/server/db/schema";
+import { llmCalls, type LlmCall, moments, sources, transcripts, type Word } from "@/server/db/schema";
 import { run } from "../exec";
 import { transcriptLines } from "../voices";
 
@@ -153,7 +153,46 @@ export function extractJson(text: string): unknown {
   return JSON.parse(candidate);
 }
 
-async function askClaude(prompt: string, signal?: AbortSignal): Promise<z.infer<typeof momentsSchema>> {
+/** The usage part of the CLI's JSON envelope (`claude -p --output-format json`). */
+const envelopeUsageSchema = z.object({
+  total_cost_usd: z.number().optional(),
+  duration_ms: z.number().optional(),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+      cache_read_input_tokens: z.number().optional(),
+      cache_creation_input_tokens: z.number().optional(),
+    })
+    .optional(),
+  modelUsage: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type ClaudeUsage = Pick<
+  LlmCall,
+  "model" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "costUsd" | "durationMs"
+>;
+
+/** Tokens and API-equivalent cost of one call; zeros when the CLI didn't report them. */
+export function envelopeUsage(envelope: unknown): ClaudeUsage {
+  const e = envelopeUsageSchema.safeParse(envelope);
+  const d = e.success ? e.data : {};
+  return {
+    model: Object.keys(d.modelUsage ?? {}).join(", ") || null,
+    inputTokens: d.usage?.input_tokens ?? 0,
+    outputTokens: d.usage?.output_tokens ?? 0,
+    cacheReadTokens: d.usage?.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: d.usage?.cache_creation_input_tokens ?? 0,
+    costUsd: d.total_cost_usd ?? 0,
+    durationMs: d.duration_ms ?? null,
+  };
+}
+
+async function askClaude(
+  prompt: string,
+  onUsage: (usage: ClaudeUsage) => void,
+  signal?: AbortSignal,
+): Promise<z.infer<typeof momentsSchema>> {
   const out = await run(
     CLAUDE_BIN,
     ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
@@ -165,6 +204,8 @@ async function askClaude(prompt: string, signal?: AbortSignal): Promise<z.infer<
     throw m ? new Error(`Claude : ${JSON.parse(m[1])}`) : e;
   });
   const envelope = JSON.parse(out) as { structured_output?: unknown; result?: string; is_error?: boolean };
+  // Tokens are spent even when the answer turns out unusable: record before parsing it.
+  onUsage(envelopeUsage(envelope));
   if (envelope.is_error) throw new Error(`claude: ${envelope.result}`);
   // On long inputs the model sometimes answers in prose instead of the structured output.
   return momentsSchema.parse(envelope.structured_output ?? extractJson(envelope.result ?? ""));
@@ -185,13 +226,16 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
     "",
     formatTranscript(tr.json.words),
   ].join("\n");
-  const ask = (text: string) =>
-    askClaude(text, signal).catch((e: unknown) => {
+  const ask = (text: string, purpose: "moments" | "moments-fix") => {
+    const record = (usage: ClaudeUsage) =>
+      db.insert(llmCalls).values({ id: nanoid(10), sourceId: source.id, purpose, ...usage }).run();
+    return askClaude(text, record, signal).catch((e: unknown) => {
       if (signal?.aborted) throw e;
-      return askClaude(text, signal); // one retry
+      return askClaude(text, record, signal); // one retry
     });
+  };
   const words = tr.json.words;
-  let data = await ask(prompt);
+  let data = await ask(prompt, "moments");
   signal?.throwIfAborted();
 
   // One correction round: Claude fixes (shortens, re-titles or drops) the moments that break the rules.
@@ -211,7 +255,7 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
       "Corrige-les : raccourcis-les sur leur partie la plus forte, ou change le titre, l'accroche et la citation",
       "pour qu'ils ne disent que ce qui est dans le passage, ou retire-les. Renvoie la liste complète au même format.",
     ].join("\n");
-    data = await ask(feedback).catch((e: unknown) => {
+    data = await ask(feedback, "moments-fix").catch((e: unknown) => {
       if (signal?.aborted) throw e;
       return data; // keep the first answer; the filter below drops what is still invalid
     });

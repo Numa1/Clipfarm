@@ -21,5 +21,15 @@ process.stdin.on("end", () => {
     reason: "Moment factice du test de bout en bout.",
     score: 90,
   };
-  process.stdout.write(JSON.stringify({ type: "result", is_error: false, structured_output: { moments: [moment] } }));
+  process.stdout.write(
+    JSON.stringify({
+      type: "result",
+      is_error: false,
+      duration_ms: 1200,
+      total_cost_usd: 0.0123,
+      usage: { input_tokens: 10, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 1500 },
+      modelUsage: { "fake-claude": { inputTokens: 10, outputTokens: 200, costUSD: 0.0123 } },
+      structured_output: { moments: [moment] },
+    }),
+  );
 });

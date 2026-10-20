@@ -84,6 +84,25 @@ export const jobs = sqliteTable("jobs", {
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 });
 
+/** One Claude CLI call, with the usage and API-equivalent cost reported in its JSON envelope. */
+export const llmCalls = sqliteTable("llm_calls", {
+  id: text("id").primaryKey(),
+  sourceId: text("source_id")
+    .notNull()
+    .references(() => sources.id, { onDelete: "cascade" }),
+  /** "moments" (first answer) or "moments-fix" (correction round). */
+  purpose: text("purpose").notNull(),
+  model: text("model"),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+  /** What the call would cost at API prices (the CLI may run on a subscription). */
+  costUsd: real("cost_usd").notNull().default(0),
+  durationMs: integer("duration_ms"),
+  createdAt: createdAt(),
+});
+
 export type Word = {
   w: string;
   start: number;
@@ -98,3 +117,4 @@ export type Source = typeof sources.$inferSelect;
 export type Moment = typeof moments.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
+export type LlmCall = typeof llmCalls.$inferSelect;

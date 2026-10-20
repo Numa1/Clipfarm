@@ -6,6 +6,7 @@ import { desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { connection } from "next/server";
 import { getDb } from "@/server/db";
+import { costSelect, toCost } from "@/server/costs";
 import { sources } from "@/server/db/schema";
 import { enqueueJob } from "@/server/jobs";
 import { refuseNonLocal } from "@/server/local-guard";
@@ -22,11 +23,22 @@ export async function GET(request: Request) {
       source: sources,
       // Qualified by hand: drizzle renders unqualified column names inside raw subqueries.
       momentCount: sql<number>`(select count(*) from "moments" where "moments"."source_id" = "sources"."id")`,
+      projectCount: sql<number>`(select count(*) from "projects" where "projects"."source_id" = "sources"."id")`,
+      exportCount: sql<number>`(select count(*) from "projects" where "projects"."source_id" = "sources"."id" and "projects"."last_export_path" is not null)`,
+      ...costSelect(`"sources"."id"`),
     })
     .from(sources)
     .orderBy(desc(sources.createdAt))
     .all();
-  return Response.json(rows.map((r) => ({ ...r.source, momentCount: r.momentCount })));
+  return Response.json(
+    rows.map(({ source, momentCount, projectCount, exportCount, ...cost }) => ({
+      ...source,
+      momentCount,
+      projectCount,
+      exportCount,
+      cost: toCost(cost),
+    })),
+  );
 }
 
 /** Streamed upload: raw file body + `x-filename` header (no multipart, no memory buffering). */

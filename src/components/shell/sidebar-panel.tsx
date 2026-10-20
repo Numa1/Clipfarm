@@ -51,7 +51,7 @@ function PanelBody({
 }: SidebarPanelProps & { pathname: string | null }) {
   const { isOpen, toggleSidebar } = useSidebar();
   const desktop = id === "desktop";
-  const onVideos = pathname === "/";
+  const onVideos = pathname === "/" || !!pathname?.startsWith("/videos/");
   const onProjects = pathname === "/projects" || !!pathname?.startsWith("/projects/");
   const live = processing.length > 0;
 
@@ -78,7 +78,7 @@ function PanelBody({
             <NavItem
               id="projects"
               href="/projects"
-              label="Projets"
+              label="Montages"
               icon={<Scissors />}
               count={projectCount}
               isCurrent={onProjects}

@@ -34,6 +34,7 @@ export function Editor() {
   const router = useRouter();
   const playerRef = useRef<PlayerRef>(null);
   const [name, setName] = useState("");
+  const [sourceId, setSourceId] = useState<string | null>(null);
   const reframeJobId = useEditor((s) => s.reframeJobId);
   const setReframeJob = useEditor((s) => s.setReframeJob);
   const reframing = !!reframeJobId;
@@ -52,6 +53,7 @@ export function Editor() {
       .then((p) => {
         load(parseTimeline(p.timeline));
         setName(p.name);
+        setSourceId(p.sourceId);
         setLastExport(p.lastExportPath);
         setReframeJob(p.activeJobs.find((j) => j.type === "reframe")?.id ?? null);
       })
@@ -217,11 +219,14 @@ export function Editor() {
     <MotionConfig reducedMotion="user">
       <div className="flex h-dvh flex-col overflow-hidden">
         <Toolbar aria-label="Projet" className="h-12 shrink-0 gap-2 rounded-none border-b border-border px-3">
-          <IconAction label="Bibliothèque" onPress={() => router.push("/")}>
+          <IconAction
+            label={sourceId ? "Retour à la vidéo" : "Bibliothèque"}
+            onPress={() => router.push(sourceId ? `/videos/${sourceId}` : "/")}
+          >
             <ArrowLeft />
           </IconAction>
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <ProjectTitle name={name} />
+            <ProjectTitle name={name} sourceId={sourceId} />
             {revision > 0 && <SaveIndicator status={saveStatus} />}
           </div>
           <AnimatePresence initial={false}>

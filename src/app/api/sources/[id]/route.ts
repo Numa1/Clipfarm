@@ -2,9 +2,11 @@ import fs from "node:fs";
 import { z } from "zod";
 import { desc, eq, like } from "drizzle-orm";
 import { getDb } from "@/server/db";
-import { jobs, moments, sources } from "@/server/db/schema";
+import { costSelect, toCost } from "@/server/costs";
+import { jobs, moments, projects, sources } from "@/server/db/schema";
 import { activeJobsFor, cancelSourceJobs } from "@/server/jobs";
 import { sourceDir } from "@/server/paths";
+import { parseTimeline } from "@/timeline/schema";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">) {
   const { id } = await ctx.params;
@@ -21,7 +23,35 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">)
       .where(like(jobs.payload, `%"sourceId":"${id}"%`))
       .orderBy(desc(jobs.createdAt))
       .get() ?? null;
-  return Response.json({ ...source, moments: list, activeJob, lastJob });
+  const montages = db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      momentId: projects.momentId,
+      updatedAt: projects.updatedAt,
+      lastExportPath: projects.lastExportPath,
+      timeline: projects.timeline,
+    })
+    .from(projects)
+    .where(eq(projects.sourceId, id))
+    .orderBy(desc(projects.updatedAt))
+    .all()
+    .map(({ timeline, ...p }) => ({ ...p, preview: firstClip(timeline) }));
+  const cost = toCost(db.select(costSelect(`"sources"."id"`)).from(sources).where(eq(sources.id, id)).get()!);
+  return Response.json({ ...source, moments: list, projects: montages, cost, activeJob, lastJob });
+}
+
+/** Source range of a montage's first video clip, to preview a draft from the source video. */
+function firstClip(timeline: unknown): { start: number; end: number } | null {
+  try {
+    const clip = parseTimeline(timeline)
+      .tracks.flatMap((t) => t.items)
+      .filter((i) => i.type === "video")
+      .sort((a, b) => a.start - b.start)[0];
+    return clip ? { start: clip.sourceIn, end: clip.sourceOut } : null;
+  } catch {
+    return null;
+  }
 }
 
 const patchSchema = z.object({ creator: z.string().trim().max(80).nullable() });

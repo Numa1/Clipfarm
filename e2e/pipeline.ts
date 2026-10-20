@@ -45,7 +45,7 @@ function probe(file: string) {
 async function main() {
   const { eq } = await import("drizzle-orm");
   const { getDb } = await import("@/server/db");
-  const { moments, projects, sources } = await import("@/server/db/schema");
+  const { llmCalls, moments, projects, sources } = await import("@/server/db/schema");
   const { createProject } = await import("@/server/projects");
   const { resolveInLibrary, sourceDir } = await import("@/server/paths");
   const { parseTimeline } = await import("@/timeline/schema");
@@ -78,6 +78,8 @@ async function main() {
   await step("Moments (faux Claude)", () => findMoments(db, { sourceId }));
   const [moment] = db.select().from(moments).where(eq(moments.sourceId, sourceId)).all();
   check(moment?.title && moment.teaserStart != null, "un moment avec titre et teaser");
+  const calls = db.select().from(llmCalls).where(eq(llmCalls.sourceId, sourceId)).all();
+  check(calls.length === 1 && calls[0].costUsd > 0 && calls[0].outputTokens > 0, "tokens et coût de l'appel enregistrés");
 
   const created = await step("Projet", () => createProject(db, { momentId: moment.id }));
   if ("error" in created) throw new Error(created.error);

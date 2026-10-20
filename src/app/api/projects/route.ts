@@ -1,18 +1,35 @@
-import { desc } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { connection } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/server/db";
-import { projects } from "@/server/db/schema";
+import { costSelect, shareOf, toCost } from "@/server/costs";
+import { projects, sources } from "@/server/db/schema";
 import { createProject } from "@/server/projects";
 
 export async function GET() {
   await connection();
   const rows = getDb()
-    .select({ id: projects.id, name: projects.name, updatedAt: projects.updatedAt, lastExportPath: projects.lastExportPath })
+    .select({
+      id: projects.id,
+      name: projects.name,
+      updatedAt: projects.updatedAt,
+      lastExportPath: projects.lastExportPath,
+      sourceId: projects.sourceId,
+      sourceTitle: sources.title,
+      momentCount: sql<number>`(select count(*) from "moments" where "moments"."source_id" = "projects"."source_id")`,
+      ...costSelect(`"projects"."source_id"`),
+    })
     .from(projects)
+    .leftJoin(sources, eq(sources.id, projects.sourceId))
     .orderBy(desc(projects.updatedAt))
     .all();
-  return Response.json(rows);
+  // A montage's cost is its share of the source's analysis (one analysis yields all its moments).
+  return Response.json(
+    rows.map(({ momentCount, costCalls, costTokens, costOutputTokens, costUsd, ...p }) => ({
+      ...p,
+      cost: p.sourceId ? shareOf(toCost({ costCalls, costTokens, costOutputTokens, costUsd }), momentCount) : null,
+    })),
+  );
 }
 
 const createSchema = z.union([

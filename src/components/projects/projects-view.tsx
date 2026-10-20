@@ -4,30 +4,27 @@ import { ArrowDownToLine, ChevronRight, CircleCheckFill, Magnifier, Pencil, Scis
 import { EmptyState, ListView, Segment } from "@heroui-pro/react";
 import { Button, buttonVariants, Chip, SearchField, Skeleton, Tooltip } from "@heroui/react";
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState, useSyncExternalStore } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { usePoll } from "@/lib/use-poll";
-import { relativeTime, splitProjectName } from "./format";
+import { relativeTime, useNow } from "@/lib/relative-time";
+import { CostChip } from "@/components/media/cost-chip";
+import type { SourceCost } from "@/lib/cost";
+import { splitProjectName } from "./format";
 
-type ProjectRow = { id: string; name: string; updatedAt: string; lastExportPath: string | null };
+type ProjectRow = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  lastExportPath: string | null;
+  sourceId: string | null;
+  sourceTitle: string | null;
+  /** This montage's share of its video's analysis. */
+  cost: SourceCost | null;
+};
 type Filter = "all" | "exported" | "draft";
 
 const STAGGER_MS = 40;
 const STAGGER_MAX = 6;
-
-const TICK_MS = 30_000;
-const subscribeTick = (cb: () => void) => {
-  const t = setInterval(cb, TICK_MS);
-  return () => clearInterval(t);
-};
-
-/** Current time rounded to 30 s, so relative times stay fresh between polls (0 on the server). */
-function useNow() {
-  return useSyncExternalStore(
-    subscribeTick,
-    () => Math.floor(Date.now() / TICK_MS) * TICK_MS,
-    () => 0,
-  );
-}
 
 function download(path: string) {
   const a = document.createElement("a");
@@ -53,7 +50,7 @@ export function ProjectsView() {
     return (projects ?? []).filter(
       (p) =>
         (filter === "all" || (filter === "exported") === Boolean(p.lastExportPath)) &&
-        (!q || p.name.toLocaleLowerCase("fr").includes(q)),
+        (!q || `${p.name} ${p.sourceTitle ?? ""}`.toLocaleLowerCase("fr").includes(q)),
     );
   }, [projects, filter, deferredQuery]);
 
@@ -65,8 +62,8 @@ export function ProjectsView() {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 pt-12 pb-16">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Projets</h1>
-        <p className="text-sm text-muted">Les shorts en cours de montage.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Montages</h1>
+        <p className="text-sm text-muted">Tous les shorts, toutes vidéos confondues.</p>
       </header>
 
       {projects === null ? (
@@ -77,7 +74,7 @@ export function ProjectsView() {
             <EmptyState.Media variant="icon">
               <Scissors />
             </EmptyState.Media>
-            <EmptyState.Title>Aucun projet</EmptyState.Title>
+            <EmptyState.Title>Aucun montage</EmptyState.Title>
             <EmptyState.Description>Monte un moment depuis la bibliothèque pour créer ton premier short.</EmptyState.Description>
           </EmptyState.Header>
           <EmptyState.Content>
@@ -89,10 +86,10 @@ export function ProjectsView() {
       ) : (
         <section className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <SearchField aria-label="Rechercher un projet" value={query} onChange={setQuery} className="w-full sm:max-w-xs">
+            <SearchField aria-label="Rechercher un montage" value={query} onChange={setQuery} className="w-full sm:max-w-xs">
               <SearchField.Group>
                 <SearchField.SearchIcon />
-                <SearchField.Input placeholder="Rechercher un projet…" />
+                <SearchField.Input placeholder="Rechercher un montage…" />
                 <SearchField.ClearButton />
               </SearchField.Group>
             </SearchField>
@@ -124,9 +121,9 @@ export function ProjectsView() {
                 <EmptyState.Title>Aucun résultat</EmptyState.Title>
                 <EmptyState.Description>
                   {deferredQuery.trim()
-                    ? `Aucun projet ne correspond à « ${deferredQuery.trim()} ».`
+                    ? `Aucun montage ne correspond à « ${deferredQuery.trim()} ».`
                     : filter === "exported"
-                      ? "Aucun projet exporté pour l’instant."
+                      ? "Aucun montage exporté pour l’instant."
                       : "Aucun brouillon en cours."}
                 </EmptyState.Description>
               </EmptyState.Header>
@@ -138,9 +135,11 @@ export function ProjectsView() {
             </EmptyState>
           ) : (
             // Keyed on the filter: switching segment replays the staggered entrance; polling keeps rows mounted.
-            <ListView key={filter} aria-label="Projets" items={visible}>
+            <ListView key={filter} aria-label="Montages" items={visible}>
               {(p) => {
-                const { title, source } = splitProjectName(p.name);
+                const split = splitProjectName(p.name);
+                const { title } = split;
+                const source = p.sourceTitle ?? split.source;
                 const index = visible.indexOf(p);
                 const edited = `Modifié ${relativeTime(p.updatedAt, now)}`;
                 return (
@@ -163,6 +162,9 @@ export function ProjectsView() {
                       </div>
                     </ListView.ItemContent>
                     <ListView.ItemAction className="flex items-center gap-2">
+                      <span className="hidden sm:contents">
+                        <CostChip cost={p.cost} share />
+                      </span>
                       {p.lastExportPath ? (
                         <Chip size="sm" variant="soft" color="success">
                           <CircleCheckFill />
@@ -208,7 +210,7 @@ export function ProjectsView() {
 
 function ProjectsSkeleton() {
   return (
-    <div className="flex flex-col gap-4" aria-busy aria-label="Chargement des projets">
+    <div className="flex flex-col gap-4" aria-busy aria-label="Chargement des montages">
       <div className="flex items-center justify-between gap-3">
         <Skeleton className="h-9 w-full max-w-xs rounded-lg" />
         <Skeleton className="hidden h-7 w-64 rounded-lg sm:block" />

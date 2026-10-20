@@ -4,7 +4,9 @@ import { ArrowUpFromSquare, Check, ChevronRight, CloudArrowUpIn, CloudCheck, Clo
 import { TextShimmer } from "@heroui-pro/react";
 import { Button, cn, Spinner } from "@heroui/react";
 import { motion, useReducedMotion, useSpring, useTransform } from "motion/react";
-import { useEffect, type ReactNode } from "react";
+import Link from "next/link";
+import { useEffect, useState, type ReactNode } from "react";
+import { fetchJson } from "@/lib/format";
 
 /** Stacked crossfade layer: every state stays mounted in the same grid cell, so the width never jumps. */
 function layer(on: boolean, className?: string) {
@@ -35,16 +37,32 @@ export function AnimatedNumber({ value }: { value: number }) {
   return <motion.span className="tabular-nums">{text}</motion.span>;
 }
 
-/** "Source — moment" names read as a breadcrumb: the source muted, the moment in front. */
-export function ProjectTitle({ name }: { name: string }) {
+/** Breadcrumb: the source video (a link back to its page), then the montage in front. */
+export function ProjectTitle({ name, sourceId }: { name: string; sourceId: string | null }) {
   const sep = name.indexOf(" — ");
-  const source = sep > 0 ? name.slice(0, sep) : null;
   const title = sep > 0 ? name.slice(sep + 3) : name;
+  // Older names embed the source ("source — moment"); newer ones are the moment's title only.
+  const [sourceTitle, setSourceTitle] = useState<string | null>(sep > 0 ? name.slice(0, sep) : null);
+  useEffect(() => {
+    if (!sourceId || sep > 0) return;
+    fetchJson<{ title: string }>(`/api/sources/${sourceId}`)
+      .then((s) => setSourceTitle(s.title))
+      .catch(() => {});
+  }, [sourceId, sep]);
   return (
     <h1 key={name} title={name} className="flex min-w-0 animate-fade-in items-center gap-1.5 text-sm">
-      {source && (
+      {sourceTitle && (
         <>
-          <span className="max-w-[40%] shrink truncate text-muted">{source}</span>
+          {sourceId ? (
+            <Link
+              href={`/videos/${sourceId}`}
+              className="max-w-[40%] shrink truncate text-muted transition-colors duration-150 hover:text-foreground"
+            >
+              {sourceTitle}
+            </Link>
+          ) : (
+            <span className="max-w-[40%] shrink truncate text-muted">{sourceTitle}</span>
+          )}
           <ChevronRight aria-hidden className="size-3 shrink-0 text-muted/60" />
         </>
       )}

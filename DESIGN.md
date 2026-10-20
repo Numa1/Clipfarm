@@ -60,8 +60,14 @@ a de la couleur, l'interface s'efface autour.
 | Raccourcis clavier | `Kbd` |
 | Barres d'outils | `Toolbar` + `Separator orientation="vertical"` |
 | Notifications | `Toast` (`toast.success / danger / info`) |
+| Aperçu vidéo | `ClipPreview` (`src/components/media`) : image fixe, lecture muette en boucle au survol, chargée à l'entrée dans l'écran ; `PreviewBadge` pour les pastilles posées dessus |
+| Coût Claude | `CostChip` : prix équivalent API d'une analyse (ou part d'un montage), masqué quand il n'a pas été mesuré |
 
 ## Layouts
+
+- **Une vidéo = un projet** : `/` grille de vidéos → `/videos/[id]` (lecteur, créateur, coût de l'analyse, onglets
+  Moments / Montages) → `/projects/[id]` éditeur, dont le fil d'Ariane ramène à la vidéo. `/projects` (« Montages »)
+  liste tous les shorts, toutes vidéos confondues.
 
 - **Bibliothèque** : header fin (wordmark), contenu centré `max-w-4xl`, `pt-12`, sections espacées de `gap-10` :
   Import → Bibliothèque → Projets.
