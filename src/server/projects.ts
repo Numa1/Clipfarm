@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { DB } from "./db";
 import { moments, projects, sources, transcripts, type Project } from "./db/schema";
-import { enqueueJob } from "./jobs";
+import { onProjectCreated } from "./pipeline";
 import { timelineFromSegment } from "@/timeline/factory";
 import { speechRanges } from "@/timeline/silence";
 
@@ -58,6 +58,6 @@ export function createProject(db: DB, body: Segment): { project: Project } | { e
     })
     .returning()
     .get();
-  enqueueJob(db, "reframe", { projectId: project.id });
+  onProjectCreated(db, project.id);
   return { project };
 }

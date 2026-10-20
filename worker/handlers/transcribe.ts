@@ -3,7 +3,6 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import type { DB } from "@/server/db";
 import { sources, transcripts, type Word } from "@/server/db/schema";
-import { enqueueJob } from "@/server/jobs";
 import { resolveInLibrary, sourceDir } from "@/server/paths";
 import { run } from "../exec";
 import { detectVoices } from "../voices";
@@ -59,6 +58,5 @@ export async function transcribe(
     .run();
   db.update(sources).set({ status: "analyzing" }).where(eq(sources.id, source.id)).run();
 
-  enqueueJob(db, "moments", { sourceId: source.id });
   return { words: words.length, contentWords: words.filter((w) => w.vo).length };
 }
