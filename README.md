@@ -58,6 +58,8 @@ pnpm studio       # Remotion Studio sur la composition
 
 `CLIPFARM_LIBRARY` (dossier de données), `WHISPER_BIN`, `WHISPER_MODEL`, `CLAUDE_BIN`, `REMOTION_LOG_LEVEL`.
 
+`CLIPFARM_TIMEOUT_<TYPE>` (en minutes) remplace la durée max d'un job (`INGEST` 60, `TRANSCRIBE` 90, `MOMENTS` 15, `REFRAME` 30, `RENDER` 30). Au-delà, le worker l'arrête et le marque en erreur. Un job en file ou en cours peut aussi être arrêté depuis l'interface (bouton ■).
+
 ## Roadmap
 
 - **V2** : sous-titres animés mot à mot, presets (police, couleurs, zooms, transitions, SFX, rythme).

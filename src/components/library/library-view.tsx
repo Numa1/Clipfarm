@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRightIcon, FilmIcon, Loader2Icon, ScissorsIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { ChevronRightIcon, FilmIcon, Loader2Icon, ScissorsIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -182,8 +182,14 @@ function StatusBadge({ status }: { status: SourceStatus }) {
 
 function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () => void }) {
   const router = useRouter();
-  const [detail] = usePoll<SourceDetail>(`/api/sources/${sourceId}`, 2000);
+  const [detail, reload] = usePoll<SourceDetail>(`/api/sources/${sourceId}`, 2000);
   const [creating, setCreating] = useState<string | null>(null);
+
+  const cancelJob = async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+    if (!res.ok && res.status !== 409) toast.error(`Arrêt impossible : ${await res.text()}`);
+    reload();
+  };
 
   const createProject = async (momentId: string) => {
     setCreating(momentId);
@@ -201,17 +207,22 @@ function SourcePanel({ sourceId, onDeleted }: { sourceId: string; onDeleted: () 
   };
 
   if (!detail) return <div className="px-11 pb-4 text-sm text-muted-foreground">Chargement…</div>;
+  const { activeJob } = detail;
 
   return (
     <div className="space-y-3 px-4 pb-4 sm:pl-11">
       {detail.error && <p className="rounded-lg bg-destructive/10 p-3 font-mono text-xs text-destructive">{detail.error}</p>}
-      {detail.activeJob && (
+      {activeJob && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span>{detail.activeJob.type}</span>
+          <span>{activeJob.type}</span>
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-foreground transition-all" style={{ width: `${detail.activeJob.progress * 100}%` }} />
+            <div className="h-full bg-foreground transition-all" style={{ width: `${activeJob.progress * 100}%` }} />
           </div>
-          <span className="tabular-nums">{Math.round(detail.activeJob.progress * 100)} %</span>
+          <span className="tabular-nums">{Math.round(activeJob.progress * 100)} %</span>
+          <Button variant="ghost" size="sm" onClick={() => cancelJob(activeJob.id)}>
+            <SquareIcon />
+            Arrêter
+          </Button>
         </div>
       )}
       {detail.moments.length > 0 && (

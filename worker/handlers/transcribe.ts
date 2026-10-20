@@ -16,7 +16,12 @@ type WhisperJson = {
 };
 
 /** Word-level French transcript with whisper.cpp (-ml 1 -sow = one segment per word). */
-export async function transcribe(db: DB, payload: { sourceId: string }, progress: (p: number) => void) {
+export async function transcribe(
+  db: DB,
+  payload: { sourceId: string },
+  progress: (p: number) => void,
+  signal?: AbortSignal,
+) {
   const source = db.select().from(sources).where(eq(sources.id, payload.sourceId)).get();
   if (!source?.audioPath) throw new Error("source not ingested");
   const audio = resolveInLibrary(source.audioPath);
@@ -34,8 +39,10 @@ export async function transcribe(db: DB, payload: { sourceId: string }, progress
         const m = /progress\s*=\s*(\d+)%/.exec(line);
         if (m) progress(+m[1] / 100);
       },
+      signal,
     },
   );
+  signal?.throwIfAborted();
 
   const raw = JSON.parse(fs.readFileSync(`${outBase}.json`, "utf8")) as WhisperJson;
   const words: Word[] = raw.transcription

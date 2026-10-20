@@ -69,12 +69,12 @@ export function extractJson(text: string): unknown {
   return JSON.parse(candidate);
 }
 
-async function askClaude(prompt: string): Promise<z.infer<typeof momentsSchema>> {
+async function askClaude(prompt: string, signal?: AbortSignal): Promise<z.infer<typeof momentsSchema>> {
   const out = await run(
     CLAUDE_BIN,
     ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
       "--system-prompt", SYSTEM, "--json-schema", JSON_SCHEMA],
-    { env: cliEnv(), input: prompt },
+    { env: cliEnv(), input: prompt, signal },
   );
   const envelope = JSON.parse(out) as { structured_output?: unknown; result?: string; is_error?: boolean };
   if (envelope.is_error) throw new Error(`claude: ${envelope.result}`);
@@ -83,14 +83,18 @@ async function askClaude(prompt: string): Promise<z.infer<typeof momentsSchema>>
 }
 
 /** Highlight detection through the local Claude Code CLI (uses the user's Claude subscription). */
-export async function findMoments(db: DB, payload: { sourceId: string }) {
+export async function findMoments(db: DB, payload: { sourceId: string }, signal?: AbortSignal) {
   const source = db.select().from(sources).where(eq(sources.id, payload.sourceId)).get();
   const tr = db.select().from(transcripts).where(eq(transcripts.sourceId, payload.sourceId)).get();
   if (!source || !tr) throw new Error("transcript missing");
   const duration = source.durationSec ?? Infinity;
 
   const prompt = `Transcription (secondes entre crochets) :\n\n${formatTranscript(tr.json.words)}`;
-  const data = await askClaude(prompt).catch(() => askClaude(prompt)); // one retry
+  const data = await askClaude(prompt, signal).catch((e: unknown) => {
+    if (signal?.aborted) throw e;
+    return askClaude(prompt, signal); // one retry
+  });
+  signal?.throwIfAborted();
 
   const rows = data.moments
     .map((m) => ({ ...m, start: Math.max(0, m.start), end: Math.min(duration, m.end) }))

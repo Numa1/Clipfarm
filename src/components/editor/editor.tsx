@@ -1,7 +1,7 @@
 "use client";
 
 import type { PlayerRef } from "@remotion/player";
-import { ArrowLeftIcon, DownloadIcon, Loader2Icon, Redo2Icon, Undo2Icon } from "lucide-react";
+import { ArrowLeftIcon, DownloadIcon, Loader2Icon, Redo2Icon, SquareIcon, Undo2Icon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,6 +53,11 @@ export function Editor() {
         toast.error(`Recadrage auto échoué : ${job.error ?? "erreur inconnue"}`);
         return;
       }
+      if (job.status === "cancelled") {
+        setReframeJob(null);
+        toast.info("Recadrage auto arrêté");
+        return;
+      }
       const p = await fetchJson<ProjectResponse>(`/api/projects/${id}`);
       const remote = parseTimeline(p.timeline);
       // A history entry (undo reverts the framing explicitly) that also resumes autosave.
@@ -81,7 +86,7 @@ export function Editor() {
 
   // Export progress polling.
   useEffect(() => {
-    if (!exportJob || exportJob.status === "done" || exportJob.status === "error") return;
+    if (!exportJob || (exportJob.status !== "queued" && exportJob.status !== "running")) return;
     const t = setInterval(async () => {
       const j = await fetchJson<Job>(`/api/jobs/${exportJob.id}`);
       setExportJob(j);
@@ -89,6 +94,7 @@ export function Editor() {
         setLastExport(String(j.result?.output));
         toast.success("Export terminé");
       } else if (j.status === "error") toast.error(`Export échoué : ${j.error}`);
+      else if (j.status === "cancelled") toast.info("Export arrêté");
     }, 1000);
     return () => clearInterval(t);
   }, [exportJob]);
@@ -101,6 +107,12 @@ export function Editor() {
       body: JSON.stringify({ timeline: useEditor.getState().timeline }),
     });
     setExportJob(await fetchJson<Job>(`/api/projects/${id}/render`, { method: "POST" }));
+  };
+
+  /** Stop a worker job; the polls above pick up the "cancelled" status and clean up. */
+  const cancelJob = async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+    if (!res.ok && res.status !== 409) toast.error(`Arrêt impossible : ${await res.text()}`);
   };
 
   const splitAtPlayhead = useCallback(() => {
@@ -166,6 +178,15 @@ export function Editor() {
         {reframing && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Loader2Icon className="size-3 animate-spin" /> Recadrage auto…
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => cancelJob(reframeJobId)}
+              aria-label="Arrêter le recadrage auto"
+              title="Arrêter le recadrage auto"
+            >
+              <SquareIcon />
+            </Button>
           </span>
         )}
         <Button variant="ghost" size="icon-sm" onClick={undo} disabled={!past.length} aria-label="Annuler">
@@ -177,6 +198,17 @@ export function Editor() {
         {lastExport && !exporting && (
           <Button variant="outline" size="sm" render={<a href={`/api/media/${lastExport}`} download />} nativeButton={false}>
             <DownloadIcon /> MP4
+          </Button>
+        )}
+        {exporting && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => cancelJob(exportJob.id)}
+            aria-label="Arrêter l'export"
+            title="Arrêter l'export"
+          >
+            <SquareIcon />
           </Button>
         )}
         <Button size="sm" onClick={startExport} disabled={!!exporting || reframing}>

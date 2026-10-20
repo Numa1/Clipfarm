@@ -2,7 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { bundle } from "@remotion/bundler";
-import { renderMedia, selectComposition } from "@remotion/renderer";
+import { makeCancelSignal, renderMedia, selectComposition } from "@remotion/renderer";
 import { eq } from "drizzle-orm";
 import type { DB } from "@/server/db";
 import { projects } from "@/server/db/schema";
@@ -44,13 +44,22 @@ function freePort(): Promise<number> {
   });
 }
 
-export async function render(db: DB, payload: { projectId: string }, progress: (p: number) => void) {
+export async function render(
+  db: DB,
+  payload: { projectId: string },
+  progress: (p: number) => void,
+  signal?: AbortSignal,
+) {
   const project = db.select().from(projects).where(eq(projects.id, payload.projectId)).get();
   if (!project) throw new Error("project not found");
   const timeline = parseTimeline(project.timeline);
 
   const serveUrl = await getBundle();
+  signal?.throwIfAborted();
   const server = await startLibraryServer();
+  // Remotion has its own cancellation primitive: stops Chrome and ffmpeg when the job is aborted.
+  const { cancelSignal, cancel } = makeCancelSignal();
+  signal?.addEventListener("abort", cancel, { once: true });
   try {
     const inputProps: ShortProps = { timeline, media: { baseUrl: server.baseUrl, quality: "full" } };
     const port = await freePort();
@@ -70,12 +79,18 @@ export async function render(db: DB, payload: { projectId: string }, progress: (
       // Short-form platforms like a high bitrate source; ~12 Mbps at 1080×1920.
       videoBitrate: "12M",
       audioBitrate: "192k",
+      cancelSignal,
       onProgress: ({ progress: p }) => progress(p),
+    }).catch((e: unknown) => {
+      fs.rmSync(output, { force: true }); // No half-written MP4 left in exports/.
+      throw e;
     });
+    signal?.throwIfAborted();
 
     db.update(projects).set({ lastExportPath: rel(output) }).where(eq(projects.id, project.id)).run();
     return { output: rel(output) };
   } finally {
+    signal?.removeEventListener("abort", cancel);
     server.close();
   }
 }

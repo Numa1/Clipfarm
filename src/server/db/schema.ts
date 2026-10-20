@@ -61,7 +61,7 @@ export const projects = sqliteTable("projects", {
 });
 
 export type JobType = "ingest" | "transcribe" | "moments" | "reframe" | "render";
-export type JobStatus = "queued" | "running" | "done" | "error";
+export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export const jobs = sqliteTable("jobs", {
   id: text("id").primaryKey(),

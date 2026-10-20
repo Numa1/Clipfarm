@@ -10,7 +10,12 @@ import { run } from "../exec";
 type Probe = { streams: { codec_type: string; width?: number; height?: number }[]; format: { duration: string } };
 
 /** ffprobe + 540p proxy for the editor + 16 kHz mono wav for Whisper. */
-export async function ingest(db: DB, payload: { sourceId: string }, progress: (p: number) => void) {
+export async function ingest(
+  db: DB,
+  payload: { sourceId: string },
+  progress: (p: number) => void,
+  signal?: AbortSignal,
+) {
   const source = db.select().from(sources).where(eq(sources.id, payload.sourceId)).get();
   if (!source) throw new Error(`source ${payload.sourceId} not found`);
   db.update(sources).set({ status: "ingesting", error: null }).where(eq(sources.id, source.id)).run();
@@ -20,7 +25,7 @@ export async function ingest(db: DB, payload: { sourceId: string }, progress: (p
   const dir = sourceDir(source.id);
 
   const probe = JSON.parse(
-    await run("ffprobe", ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", input]),
+    await run("ffprobe", ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", input], { signal }),
   ) as Probe;
   const video = probe.streams.find((s) => s.codec_type === "video");
   const durationSec = Number(probe.format.duration);
@@ -36,13 +41,13 @@ export async function ingest(db: DB, payload: { sourceId: string }, progress: (p
   // Proxy: 540p H.264 with dense keyframes → fast scrubbing in the browser.
   const encodeSoftware = () =>
     run("ffmpeg", ["-y", "-i", input, "-vf", "scale=-2:540", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-      "-g", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy], { onStderr });
+      "-g", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy], { onStderr, signal });
 
   await run(
     "ffmpeg",
     ["-y", "-i", input, "-vf", "scale=-2:540", "-c:v", "h264_videotoolbox", "-b:v", "2M", "-g", "30",
       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", proxy],
-    { onStderr },
+    { onStderr, signal },
   ).catch(encodeSoftware); // Fallback when the hardware encoder is unavailable.
 
   // The hardware encoder can exit 0 while still emitting a malformed H.264 stream
@@ -51,9 +56,11 @@ export async function ingest(db: DB, payload: { sourceId: string }, progress: (p
   let decodeErrored = false;
   await run("ffmpeg", ["-v", "error", "-i", proxy, "-f", "null", "-"], {
     onStderr: () => (decodeErrored = true),
+    signal,
   }).catch(() => (decodeErrored = true));
   if (decodeErrored) await encodeSoftware();
-  await run("ffmpeg", ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio]);
+  await run("ffmpeg", ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio], { signal });
+  signal?.throwIfAborted();
 
   db.update(sources)
     .set({

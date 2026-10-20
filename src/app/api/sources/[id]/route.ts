@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { and, desc, eq, inArray, like } from "drizzle-orm";
 import { getDb } from "@/server/db";
 import { jobs, moments, sources } from "@/server/db/schema";
+import { cancelSourceJobs } from "@/server/jobs";
 import { sourceDir } from "@/server/paths";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">) {
@@ -20,7 +21,10 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/sources/[id]">)
 
 export async function DELETE(_req: Request, ctx: RouteContext<"/api/sources/[id]">) {
   const { id } = await ctx.params;
-  getDb().delete(sources).where(eq(sources.id, id)).run();
+  const db = getDb();
+  // Stop its pipeline first: a running job would otherwise fail on the deleted files.
+  cancelSourceJobs(db, id);
+  db.delete(sources).where(eq(sources.id, id)).run();
   fs.rmSync(sourceDir(id), { recursive: true, force: true });
   return new Response(null, { status: 204 });
 }

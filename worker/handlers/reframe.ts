@@ -39,6 +39,7 @@ export async function reframe(
   db: DB,
   payload: { projectId: string; itemIds?: string[] },
   progress: (p: number) => void,
+  signal?: AbortSignal,
 ) {
   const problem = reframeSetupProblem();
   if (problem) throw new Error(problem);
@@ -63,7 +64,7 @@ export async function reframe(
     const args = ["run", "--quiet", SCRIPT, file, String(clip.sourceIn), String(clip.sourceOut)];
     // The render uses the original file: lets the script avoid over-magnifying low-res sources.
     if (asset.height) args.push("--src-height", String(asset.height));
-    const out = await run("uv", args, { input: JSON.stringify(speech) }).catch((e: Error) => {
+    const out = await run("uv", args, { input: JSON.stringify(speech), signal }).catch((e: Error) => {
       if (/ENOENT/.test(e.message)) throw new Error("uv est introuvable : installe-le (https://docs.astral.sh/uv/) pour le cadrage auto.");
       throw e;
     });
@@ -71,6 +72,7 @@ export async function reframe(
     progress(++done / clips.length);
   }
 
+  signal?.throwIfAborted();
   // Re-read: the user may have edited the timeline while we were computing. Only clips still in
   // auto mode receive the result (a clip switched to center/manual meanwhile keeps that choice).
   const fresh = db.select().from(projects).where(eq(projects.id, payload.projectId)).get();
