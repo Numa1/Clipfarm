@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Clipfarm
 
-## Getting Started
+Vidéos longues (podcasts, interviews, streams) → shorts verticaux 30–60 s.
+V1 : éditeur web local pour un humain. Le modèle de timeline (JSON déclaratif) est conçu pour être piloté par des agents en V3.
 
-First, run the development server:
+## Démarrage
+
+Prérequis : macOS Apple Silicon, Node 24+, pnpm, `ffmpeg`, `uv`, Claude Code (`claude`) connecté à ton abonnement.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm setup:whisper   # whisper.cpp via Homebrew + modèle large-v3-turbo (~1,6 Go)
+claude               # une fois, pour /login si ce n'est pas déjà fait
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Deux terminaux :
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm dev --port 3100   # l'app → http://localhost:3100
+pnpm worker            # le worker local (ingest, transcription, moments, recadrage, rendu)
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Pipeline
 
-## Learn More
+1. **Upload** (`POST /api/sources`) → fichier stocké dans `library/sources/<id>/`.
+2. **ingest** : ffprobe + proxy 540p (scrub fluide) + wav 16 kHz.
+3. **transcribe** : whisper.cpp en français, horodatage au mot.
+4. **moments** : `claude -p` (headless, sur l'abonnement) renvoie 5–10 passages de 30–60 s avec hook et score.
+5. **Monter** un moment → projet pré-découpé + texte d'accroche, puis **reframe** : détection de visage (OpenCV) → keyframes de recadrage 9:16.
+6. **Éditeur** : timeline multi-pistes (couper, trim, déplacer, aimantation, undo/redo), preview Remotion, texte, SFX/musique.
+7. **render** : Remotion → MP4 1080×1920 dans `library/exports/`.
 
-To learn more about Next.js, take a look at the following resources:
+Toutes les tâches lourdes passent par la file `jobs` (SQLite) consommée par `worker/`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Dossier | Rôle |
+|---|---|
+| `src/timeline/` | **Schéma JSON de timeline** (Zod) + opérations pures (split, trim, move…) — le contrat partagé humain / agents |
+| `src/remotion/` | Composition unique, utilisée par la preview (Player) et le rendu |
+| `src/components/editor/` | Éditeur : store (historique), timeline, preview, inspecteur, médias |
+| `src/app/api/` | Routes : sources, projets, jobs, médias (Range), SFX |
+| `src/server/` | DB (Drizzle + SQLite), file de jobs, chemins de la bibliothèque |
+| `worker/` | Handlers des jobs (ffmpeg, whisper, claude, OpenCV, Remotion) |
+| `scripts/` | `reframe.py` (uv, OpenCV), installation de Whisper |
+| `library/` | Données locales (ignorées par git) : sources, exports, sfx, `clipfarm.db` |
 
-## Deploy on Vercel
+## Commandes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm test         # tests du schéma et des opérations de timeline
+pnpm typecheck
+pnpm db:generate  # après une modif de src/server/db/schema.ts
+pnpm studio       # Remotion Studio sur la composition
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Variables d'environnement (optionnelles)
+
+`CLIPFARM_LIBRARY` (dossier de données), `WHISPER_BIN`, `WHISPER_MODEL`, `CLAUDE_BIN`, `REMOTION_LOG_LEVEL`.
+
+## Roadmap
+
+- **V2** : sous-titres animés mot à mot, presets (police, couleurs, zooms, transitions, SFX, rythme).
+- **V3** : agents monteur / reviewer qui écrivent la timeline via l'API, export auto, validation humaine.
+- **V4** : publication YouTube Shorts / TikTok, full auto, boucle de feedback sur les stats.

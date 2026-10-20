@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "web", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev", "--port", "3100"], "port": 3100 },
+    { "name": "worker", "runtimeExecutable": "pnpm", "runtimeArgs": ["worker"], "port": 0 }
+  ]
+}
