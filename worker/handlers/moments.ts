@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { momentsPrompt } from "@/prompts/moments";
 import type { DB } from "@/server/db";
-import { llmCalls, type LlmCall, moments, sources, transcripts, type Word } from "@/server/db/schema";
-import { run } from "../exec";
+import { moments, type Source, sources, transcripts, type Word } from "@/server/db/schema";
+import { callClaude } from "@/server/llm";
 import { transcriptLines } from "../voices";
 
-const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
+export { envelopeUsage, type ClaudeUsage } from "@/server/llm";
 
 const momentsSchema = z.object({
   moments: z
@@ -25,57 +26,7 @@ const momentsSchema = z.object({
     .max(15),
 });
 
-/**
- * When the worker is started from inside a Claude Code session (e.g. a desktop-app terminal),
- * it inherits that session's CLAUDE_* / ANTHROPIC_* variables — CLAUDE_CODE_SIMPLE disables
- * OAuth/keychain auth and the CLI reports "Not logged in". Run the CLI with a clean env so it
- * uses the user's own subscription login.
- */
-function cliEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC_)/.test(k)),
-  ) as NodeJS.ProcessEnv;
-}
-
 const JSON_SCHEMA = JSON.stringify(z.toJSONSchema(momentsSchema));
-
-const SYSTEM = `Tu es un monteur expert en contenus courts (TikTok, YouTube Shorts, Reels) en français.
-On te donne le titre d'une vidéo longue (podcast, interview, stream gaming…), le nom du créateur s'il est connu,
-et sa transcription horodatée. Les lignes marquées [VO] sont dans une autre langue que celle du créateur :
-ce sont les voix du contenu (personnages d'un jeu, cinématique, vidéo regardée), PAS le créateur.
-
-Trouve les 5 à 10 meilleurs moments pour des shorts :
-- centrés sur le créateur : ce qu'il dit, ses réactions, ses coups de gueule, son humour, ses histoires.
-  Écarte les passages où il regarde passivement (cinématique, menu, chargement) : des lignes [VO] ne servent
-  au plus que de courte mise en contexte (quelques secondes) juste avant sa réaction. Ne cite jamais une ligne [VO]
-  comme si c'était le créateur ;
-- autonomes : compréhensibles sans contexte, une idée complète avec une chute ;
-- denses : 20 à 45 secondes (end − start ≤ 45, impératif : un moment plus long est rejeté), le plus court
-  possible tant que l'histoire tient, sans temps mort ;
-- "start" sur la première phrase qui accroche (affirmation choc, question, conflit, révélation), jamais sur de la
-  mise en place (« bon », « alors », « allez les gars »…) ; "end" juste après la chute ; des limites de phrase.
-
-Pour chaque moment :
-- "title" : titre du short, à la 3e personne, qui parle du créateur et de ce qui lui arrive. Utilise son nom
-  uniquement s'il est fourni (n'invente pas de nom, et un nom de personnage du jeu n'est pas le sien) ; sinon
-  « il », « ce streamer », « ce joueur »… 40 à 70 caractères, crée un manque (on veut savoir la suite), pas de
-  guillemets, au plus un emoji. Exemple : « Élu MVP… et transféré le soir même 😳 » ;
-- "hook" : texte affiché à l'écran pendant les 3 premières secondes, 7 mots max, qui donne envie de rester
-  (une promesse ou une question, pas le titre recopié, pas une réplique [VO]) ;
-- "teaser" : le pic du moment (punchline, cri, réaction), 1,5 à 4 s pris dans [start, end], rejoué en ouverture
-  avant le début du moment — seulement si ça rend l'ouverture plus forte, sinon null ;
-- "proof" : la phrase du passage qui justifie le titre, copiée mot pour mot depuis la transcription entre
-  start et end (4 à 15 mots, sans l'horodatage) ;
-- "reason" : pourquoi ça marche (1 phrase) ; "score" : 0-100.
-
-Exactitude (impératif, un moment qui ne la respecte pas est rejeté) :
-- "title" et "hook" ne disent que ce qui est dit ou montré dans le passage [start, end] : rien de ce qui arrive
-  avant ou après dans la vidéo (un événement annoncé deux minutes plus tard n'appartient pas au moment) ;
-- n'invente aucun fait, aucun chiffre, aucune relation entre les personnes ;
-- ne complète jamais un prénom en personnalité connue (« Kylian » ne veut pas dire Kylian Mbappé) : garde le mot
-  exact de la transcription.
-Toutes les valeurs de temps sont en secondes, prises dans les horodatages.
-Réponds uniquement avec l'objet JSON { "moments": [...] }, sans texte autour.`;
 
 const EN_WORDS = new Set(
   ("the you i my we and to of is it that this what why how did was wasn't your with for get got just gotta don't " +
@@ -153,60 +104,25 @@ export function extractJson(text: string): unknown {
   return JSON.parse(candidate);
 }
 
-/** The usage part of the CLI's JSON envelope (`claude -p --output-format json`). */
-const envelopeUsageSchema = z.object({
-  total_cost_usd: z.number().optional(),
-  duration_ms: z.number().optional(),
-  usage: z
-    .object({
-      input_tokens: z.number().optional(),
-      output_tokens: z.number().optional(),
-      cache_read_input_tokens: z.number().optional(),
-      cache_creation_input_tokens: z.number().optional(),
-    })
-    .optional(),
-  modelUsage: z.record(z.string(), z.unknown()).optional(),
-});
-
-export type ClaudeUsage = Pick<
-  LlmCall,
-  "model" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "costUsd" | "durationMs"
->;
-
-/** Tokens and API-equivalent cost of one call; zeros when the CLI didn't report them. */
-export function envelopeUsage(envelope: unknown): ClaudeUsage {
-  const e = envelopeUsageSchema.safeParse(envelope);
-  const d = e.success ? e.data : {};
-  return {
-    model: Object.keys(d.modelUsage ?? {}).join(", ") || null,
-    inputTokens: d.usage?.input_tokens ?? 0,
-    outputTokens: d.usage?.output_tokens ?? 0,
-    cacheReadTokens: d.usage?.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: d.usage?.cache_creation_input_tokens ?? 0,
-    costUsd: d.total_cost_usd ?? 0,
-    durationMs: d.duration_ms ?? null,
-  };
-}
-
-async function askClaude(
+/** One call to Claude for the moments prompt: runs it, records its `llm_calls` row, parses the answer. */
+async function ask(
+  db: DB,
+  source: Pick<Source, "id">,
   prompt: string,
-  onUsage: (usage: ClaudeUsage) => void,
+  purpose: "moments" | "moments-fix",
   signal?: AbortSignal,
 ): Promise<z.infer<typeof momentsSchema>> {
-  const out = await run(
-    CLAUDE_BIN,
-    ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
-      "--system-prompt", SYSTEM, "--json-schema", JSON_SCHEMA],
-    { env: cliEnv(), input: prompt, signal },
-  ).catch((e: Error) => {
-    // The CLI exits 1 with its JSON envelope on stdout: surface its message (e.g. usage limit reached).
-    const m = /"result":("(?:[^"\\]|\\.)*")/.exec(e.message);
-    throw m ? new Error(`Claude : ${JSON.parse(m[1])}`) : e;
+  const envelope = await callClaude({
+    db,
+    system: momentsPrompt.system,
+    prompt,
+    jsonSchema: JSON_SCHEMA,
+    promptId: momentsPrompt.id,
+    promptVersion: momentsPrompt.version,
+    purpose,
+    sourceId: source.id,
+    signal,
   });
-  const envelope = JSON.parse(out) as { structured_output?: unknown; result?: string; is_error?: boolean };
-  // Tokens are spent even when the answer turns out unusable: record before parsing it.
-  onUsage(envelopeUsage(envelope));
-  if (envelope.is_error) throw new Error(`claude: ${envelope.result}`);
   // On long inputs the model sometimes answers in prose instead of the structured output.
   return momentsSchema.parse(envelope.structured_output ?? extractJson(envelope.result ?? ""));
 }
@@ -218,24 +134,18 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
   if (!source || !tr) throw new Error("transcript missing");
   const duration = source.durationSec ?? Infinity;
 
-  const prompt = [
-    `Titre de la vidéo : ${source.title}`,
-    `Créateur : ${source.creator?.trim() || "inconnu (parle de lui à la 3e personne, sans nom)"}`,
-    "",
-    "Transcription (secondes entre crochets) :",
-    "",
-    formatTranscript(tr.json.words),
-  ].join("\n");
-  const ask = (text: string, purpose: "moments" | "moments-fix") => {
-    const record = (usage: ClaudeUsage) =>
-      db.insert(llmCalls).values({ id: nanoid(10), sourceId: source.id, purpose, ...usage }).run();
-    return askClaude(text, record, signal).catch((e: unknown) => {
+  const prompt = momentsPrompt.build({
+    title: source.title,
+    creator: source.creator,
+    transcript: formatTranscript(tr.json.words),
+  });
+  const askWithRetry = (text: string, purpose: "moments" | "moments-fix") =>
+    ask(db, source, text, purpose, signal).catch((e: unknown) => {
       if (signal?.aborted) throw e;
-      return askClaude(text, record, signal); // one retry
+      return ask(db, source, text, purpose, signal); // one retry
     });
-  };
   const words = tr.json.words;
-  let data = await ask(prompt, "moments");
+  let data = await askWithRetry(prompt, "moments");
   signal?.throwIfAborted();
 
   // One correction round: Claude fixes (shortens, re-titles or drops) the moments that break the rules.
@@ -255,7 +165,7 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
       "Corrige-les : raccourcis-les sur leur partie la plus forte, ou change le titre, l'accroche et la citation",
       "pour qu'ils ne disent que ce qui est dans le passage, ou retire-les. Renvoie la liste complète au même format.",
     ].join("\n");
-    data = await ask(feedback, "moments-fix").catch((e: unknown) => {
+    data = await askWithRetry(feedback, "moments-fix").catch((e: unknown) => {
       if (signal?.aborted) throw e;
       return data; // keep the first answer; the filter below drops what is still invalid
     });
