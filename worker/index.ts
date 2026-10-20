@@ -49,7 +49,13 @@ async function loop() {
   requeueStaleJobs(db);
   console.log("Clipfarm worker ready — waiting for jobs…");
   for (;;) {
-    const job = claimNextJob(db);
+    let job: Job | null = null;
+    try {
+      job = claimNextJob(db);
+    } catch (e) {
+      // Transient DB contention must never kill the worker; retry on next tick.
+      console.warn("claim failed, retrying:", e instanceof Error ? e.message : e);
+    }
     if (job) await runJob(job);
     else await new Promise((r) => setTimeout(r, POLL_MS));
   }

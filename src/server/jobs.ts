@@ -7,7 +7,11 @@ export function enqueueJob(db: DB, type: JobType, payload: Record<string, unknow
   return db.insert(jobs).values({ id: nanoid(10), type, payload }).returning().get();
 }
 
-/** Atomically take the oldest queued job (single worker, but safe against double claims). */
+/**
+ * Atomically take the oldest queued job (single worker, but safe against double claims).
+ * IMMEDIATE takes the write lock upfront: a deferred read→write upgrade fails with
+ * SQLITE_BUSY right away (busy_timeout doesn't apply) when Next.js writes concurrently.
+ */
 export function claimNextJob(db: DB): Job | null {
   return db.transaction((tx) => {
     const next = tx.select().from(jobs).where(eq(jobs.status, "queued")).orderBy(asc(jobs.createdAt)).limit(1).get();
@@ -19,7 +23,7 @@ export function claimNextJob(db: DB): Job | null {
       .returning()
       .get();
     return res ?? null;
-  });
+  }, { behavior: "immediate" });
 }
 
 export function setJobProgress(db: DB, id: string, progress: number) {
