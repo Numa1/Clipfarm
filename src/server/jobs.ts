@@ -4,7 +4,10 @@ import type { DB } from "./db";
 import { jobs, moments, sources, type Job, type JobType, type SourceStatus } from "./db/schema";
 
 export function enqueueJob(db: DB, type: JobType, payload: Record<string, unknown>): Job {
-  return db.insert(jobs).values({ id: nanoid(10), type, payload }).returning().get();
+  const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : null;
+  const projectId = typeof payload.projectId === "string" ? payload.projectId : null;
+  const lane = type === "moments" ? "light" : "heavy";
+  return db.insert(jobs).values({ id: nanoid(10), type, payload, sourceId, projectId, lane }).returning().get();
 }
 
 /**
