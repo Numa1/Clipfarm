@@ -3,7 +3,6 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import type { DB } from "@/server/db";
 import { sources } from "@/server/db/schema";
-import { enqueueJob } from "@/server/jobs";
 import { rel, resolveInLibrary, sourceDir } from "@/server/paths";
 import { run } from "../exec";
 
@@ -74,6 +73,5 @@ export async function ingest(
     .where(eq(sources.id, source.id))
     .run();
 
-  enqueueJob(db, "transcribe", { sourceId: source.id });
   return { durationSec };
 }

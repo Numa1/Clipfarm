@@ -10,6 +10,7 @@ import {
   requeueStaleJobs,
   setJobProgress,
 } from "@/server/jobs";
+import { nextJobsAfter } from "@/server/pipeline";
 import { ingest } from "./handlers/ingest";
 import { findMoments } from "./handlers/moments";
 import { reframe, reframeSetupProblem } from "./handlers/reframe";
@@ -80,6 +81,7 @@ async function runJob(job: Job) {
     const result = await Promise.race([handlers[job.type](job.payload as never, progress, signal), untilAborted(signal)]);
     if (finishJob(db, job.id, result)) {
       console.log(`✔ ${job.type} ${job.id} in ${((Date.now() - started) / 1000).toFixed(1)}s`, result);
+      nextJobsAfter(db, job.type, job.payload as Record<string, unknown>, result);
     } else console.log(`■ ${job.type} ${job.id} cancelled after it finished`);
   } catch (e) {
     if (cancel.signal.aborted) {
