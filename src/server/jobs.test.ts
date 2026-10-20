@@ -33,13 +33,13 @@ describe("cancelJob", () => {
   it("cancels a queued job so the worker never claims it, and marks its source", () => {
     const job = enqueueJob(db, "ingest", { sourceId: "src1" });
     expect(cancelJob(db, job.id)?.status).toBe("cancelled");
-    expect(claimNextJob(db)).toBeNull();
+    expect(claimNextJob(db, "heavy")).toBeNull();
     expect(sourceOf()).toMatchObject({ status: "error", error: CANCELLED_MESSAGE });
   });
 
   it("flags a running job, and the worker's late result does not overwrite it", () => {
     const job = enqueueJob(db, "render", { projectId: "p1" });
-    claimNextJob(db);
+    claimNextJob(db, "heavy");
     cancelJob(db, job.id);
     expect(isJobCancelled(db, job.id)).toBe(true);
     expect(finishJob(db, job.id, { output: "x.mp4" })).toBe(false);
@@ -49,7 +49,7 @@ describe("cancelJob", () => {
 
   it("leaves finished jobs alone", () => {
     const job = enqueueJob(db, "render", { projectId: "p1" });
-    claimNextJob(db);
+    claimNextJob(db, "heavy");
     expect(finishJob(db, job.id)).toBe(true);
     expect(cancelJob(db, job.id)).toBeNull();
   });
@@ -94,10 +94,51 @@ describe("markSourceFailed", () => {
   });
 });
 
+describe("enqueueJob", () => {
+  it("returns the already-active job instead of inserting a duplicate for the same dedupe key", () => {
+    const first = enqueueJob(db, "ingest", { sourceId: "src1" });
+    const second = enqueueJob(db, "ingest", { sourceId: "src1" });
+    expect(second.id).toBe(first.id);
+    const rows = db.select().from(schema.jobs).where(eq(schema.jobs.sourceId, "src1")).all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("allows a new job with the same key once the earlier one has ended", () => {
+    const first = enqueueJob(db, "ingest", { sourceId: "src1" });
+    claimNextJob(db, "heavy");
+    finishJob(db, first.id);
+    const second = enqueueJob(db, "ingest", { sourceId: "src1" });
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("sets the lane and dedupe key from the job registry", () => {
+    const heavy = enqueueJob(db, "ingest", { sourceId: "src1" });
+    const light = enqueueJob(db, "moments", { sourceId: "src1" });
+    expect(heavy).toMatchObject({ lane: "heavy", dedupeKey: "ingest:source:src1" });
+    expect(light).toMatchObject({ lane: "light", dedupeKey: "moments:source:src1" });
+  });
+});
+
+describe("claimNextJob lanes", () => {
+  it("claims and runs a light job independently while a heavy job is in progress", () => {
+    const heavy = enqueueJob(db, "ingest", { sourceId: "src1" });
+    const light = enqueueJob(db, "moments", { sourceId: "src1" });
+
+    const claimedHeavy = claimNextJob(db, "heavy");
+    expect(claimedHeavy).toMatchObject({ id: heavy.id, status: "running" });
+    // The heavy job is still running — the light one is claimed and runs on its own lane.
+    const claimedLight = claimNextJob(db, "light");
+    expect(claimedLight).toMatchObject({ id: light.id, status: "running" });
+
+    expect(claimNextJob(db, "heavy")).toBeNull();
+    expect(claimNextJob(db, "light")).toBeNull();
+  });
+});
+
 describe("retryJob", () => {
   it("queues a copy of a failed job and resets the source status", () => {
     const job = enqueueJob(db, "transcribe", { sourceId: "src1" });
-    claimNextJob(db);
+    claimNextJob(db, "heavy");
     failJob(db, job.id, "whisper");
     markSourceFailed(db, job, "whisper");
     const res = retryJob(db, job.id);
@@ -107,7 +148,7 @@ describe("retryJob", () => {
 
   it("refuses jobs that did not fail, and retries while the pipeline is busy", () => {
     const done = enqueueJob(db, "render", { projectId: "p1" });
-    claimNextJob(db);
+    claimNextJob(db, "heavy");
     finishJob(db, done.id);
     expect(retryJob(db, done.id)).toMatchObject({ status: 409 });
 

@@ -1,23 +1,47 @@
-import { and, asc, desc, eq, inArray, like } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { DB } from "./db";
-import { jobs, moments, sources, type Job, type JobType, type SourceStatus } from "./db/schema";
+import { jobs, moments, sources, type Job, type JobLane, type JobType, type SourceStatus } from "./db/schema";
+import { jobDedupeKey, jobLane, validateJobPayload } from "./job-registry";
 
+/**
+ * Validates the payload against the job type's registry entry, derives its lane and dedupe key,
+ * and queues it — unless a queued or running job already has that dedupe key, in which case that
+ * existing job is returned instead of creating a duplicate.
+ */
 export function enqueueJob(db: DB, type: JobType, payload: Record<string, unknown>): Job {
-  const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : null;
-  const projectId = typeof payload.projectId === "string" ? payload.projectId : null;
-  const lane = type === "moments" ? "light" : "heavy";
-  return db.insert(jobs).values({ id: nanoid(10), type, payload, sourceId, projectId, lane }).returning().get();
+  const validated = validateJobPayload(type, payload);
+  const sourceId = typeof validated.sourceId === "string" ? validated.sourceId : null;
+  const projectId = typeof validated.projectId === "string" ? validated.projectId : null;
+  const lane = jobLane(type);
+  const dedupeKey = jobDedupeKey(type, validated);
+
+  return db.transaction((tx) => {
+    const existing = tx
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.dedupeKey, dedupeKey), inArray(jobs.status, ["queued", "running"])))
+      .get();
+    if (existing) return existing;
+    return tx.insert(jobs).values({ id: nanoid(10), type, payload: validated, sourceId, projectId, lane, dedupeKey }).returning().get();
+  });
 }
 
 /**
- * Atomically take the oldest queued job (single worker, but safe against double claims).
+ * Atomically take the oldest queued job of the given lane (one worker loop per lane, but safe
+ * against double claims, including across lanes running in the same process).
  * IMMEDIATE takes the write lock upfront: a deferred read→write upgrade fails with
  * SQLITE_BUSY right away (busy_timeout doesn't apply) when Next.js writes concurrently.
  */
-export function claimNextJob(db: DB): Job | null {
+export function claimNextJob(db: DB, lane: JobLane): Job | null {
   return db.transaction((tx) => {
-    const next = tx.select().from(jobs).where(eq(jobs.status, "queued")).orderBy(asc(jobs.createdAt)).limit(1).get();
+    const next = tx
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.status, "queued"), eq(jobs.lane, lane)))
+      .orderBy(asc(jobs.createdAt))
+      .limit(1)
+      .get();
     if (!next) return null;
     const res = tx
       .update(jobs)
@@ -99,11 +123,12 @@ const RETRY_STATUS: Partial<Record<JobType, SourceStatus>> = {
 
 /** Queued or running jobs of a source, or of a project. */
 export function activeJobsFor(db: DB, key: { sourceId: string } | { projectId: string }) {
-  const [field, id] = "sourceId" in key ? ["sourceId", key.sourceId] : ["projectId", key.projectId];
+  const column = "sourceId" in key ? jobs.sourceId : jobs.projectId;
+  const id = "sourceId" in key ? key.sourceId : key.projectId;
   return db
     .select()
     .from(jobs)
-    .where(and(inArray(jobs.status, ["queued", "running"]), like(jobs.payload, `%"${field}":"${id}"%`)))
+    .where(and(inArray(jobs.status, ["queued", "running"]), eq(column, id)))
     .orderBy(desc(jobs.createdAt))
     .all();
 }
@@ -132,7 +157,7 @@ export function retryJob(db: DB, id: string): { job: Job } | { error: string; st
 export function cancelSourceJobs(db: DB, sourceId: string) {
   db.update(jobs)
     .set({ status: "cancelled", error: CANCELLED_MESSAGE, finishedAt: new Date() })
-    .where(and(inArray(jobs.status, ["queued", "running"]), like(jobs.payload, `%"sourceId":"${sourceId}"%`)))
+    .where(and(inArray(jobs.status, ["queued", "running"]), eq(jobs.sourceId, sourceId)))
     .run();
 }
 
