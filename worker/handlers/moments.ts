@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { momentsPrompt } from "@/prompts/moments";
+import { nicheConfig } from "@/config/niches";
+import { momentsPrompt, momentsPrompt2 } from "@/prompts/moments";
 import type { DB } from "@/server/db";
 import { moments, type Source, sources, transcripts, type Word } from "@/server/db/schema";
 import { callClaude } from "@/server/llm";
@@ -80,11 +81,19 @@ function normalize(text: string): string {
 }
 
 /** Why a moment proposed by Claude is not acceptable (empty when it is). */
-export function momentProblems(m: Pick<FoundMoment, "start" | "end" | "proof">, words: Word[]): string[] {
+export function momentProblems(
+  m: Pick<FoundMoment, "start" | "end" | "proof">,
+  words: Word[],
+  { min = MOMENT_MIN_SEC, max = MOMENT_MAX_SEC }: { min?: number; max?: number } = {},
+): string[] {
   const problems: string[] = [];
   const length = m.end - m.start;
-  if (length > MOMENT_MAX_SEC) problems.push(`dure ${Math.round(length)} s, le maximum est 45 s`);
-  if (length < MOMENT_MIN_SEC) problems.push(`dure ${Math.round(length)} s, le minimum est 20 s`);
+  // The message states the prompt's target bounds (20–45 s) by default, distinct from the wider
+  // tolerance (MOMENT_MIN_SEC/MOMENT_MAX_SEC) actually enforced below; a custom range states itself.
+  const maxLabel = max === MOMENT_MAX_SEC ? 45 : max;
+  const minLabel = min === MOMENT_MIN_SEC ? 20 : min;
+  if (length > max) problems.push(`dure ${Math.round(length)} s, le maximum est ${maxLabel} s`);
+  if (length < min) problems.push(`dure ${Math.round(length)} s, le minimum est ${minLabel} s`);
   // The proof must be words actually said inside the moment: the title is grounded in it.
   const inside = normalize(words.filter((w) => w.start >= m.start - 0.5 && w.end <= m.end + 0.5).map((w) => w.w).join(" "));
   const proof = normalize(m.proof);
@@ -110,15 +119,17 @@ async function ask(
   source: Pick<Source, "id">,
   prompt: string,
   purpose: "moments" | "moments-fix",
+  system: string,
+  promptVersion: string,
   signal?: AbortSignal,
 ): Promise<z.infer<typeof momentsSchema>> {
   const envelope = await callClaude({
     db,
-    system: momentsPrompt.system,
+    system,
     prompt,
     jsonSchema: JSON_SCHEMA,
     promptId: momentsPrompt.id,
-    promptVersion: momentsPrompt.version,
+    promptVersion,
     purpose,
     sourceId: source.id,
     signal,
@@ -134,15 +145,24 @@ export async function findMoments(db: DB, payload: { sourceId: string }, signal?
   if (!source || !tr) throw new Error("transcript missing");
   const duration = source.durationSec ?? Infinity;
 
-  const prompt = momentsPrompt.build({
+  // Niche connue : prompt v2 (consigne de niche + plage de durée, pour l'instant celle par défaut
+  // existante — un style, vague 5, pourra la surcharger). Sinon, comportement inchangé (prompt v1).
+  const niche = source.niche ? nicheConfig(source.niche) : undefined;
+  const momentDurationRange: [number, number] = [MOMENT_MIN_SEC, MOMENT_MAX_SEC];
+  const system = niche
+    ? momentsPrompt2.system({ nicheHint: niche.promptHint, durationRange: momentDurationRange })
+    : momentsPrompt.system;
+  const promptVersion = niche ? momentsPrompt2.version : momentsPrompt.version;
+
+  const prompt = (niche ? momentsPrompt2 : momentsPrompt).build({
     title: source.title,
     creator: source.creator,
     transcript: formatTranscript(tr.json.words),
   });
   const askWithRetry = (text: string, purpose: "moments" | "moments-fix") =>
-    ask(db, source, text, purpose, signal).catch((e: unknown) => {
+    ask(db, source, text, purpose, system, promptVersion, signal).catch((e: unknown) => {
       if (signal?.aborted) throw e;
-      return ask(db, source, text, purpose, signal); // one retry
+      return ask(db, source, text, purpose, system, promptVersion, signal); // one retry
     });
   const words = tr.json.words;
   let data = await askWithRetry(prompt, "moments");

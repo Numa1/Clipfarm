@@ -35,4 +35,18 @@ describe("moments", () => {
     expect(momentProblems({ start: 99, end: 160, proof: "Salut Kylian" }, words)).toEqual(["dure 61 s, le maximum est 45 s"]);
     expect(momentProblems({ start: 99, end: 108, proof: "Salut Kylian" }, words)).toEqual(["dure 9 s, le minimum est 20 s"]);
   });
+
+  it("accepte une plage de durée personnalisée au lieu des constantes par défaut", () => {
+    const said = "Salut Kylian, tu vas bien ? Je suis actuellement en live sur Twitch".split(" ");
+    const words = said.map((w, i) => ({ w, start: 100 + i, end: 100.8 + i }));
+    // 9 s : rejeté par défaut (minimum 15 s), accepté avec une plage personnalisée plus courte.
+    expect(momentProblems({ start: 99, end: 108, proof: "Salut Kylian" }, words)).toEqual(["dure 9 s, le minimum est 20 s"]);
+    expect(momentProblems({ start: 99, end: 108, proof: "Salut Kylian" }, words, { min: 5, max: 50 })).toEqual([]);
+    // 26 s : accepté par défaut, rejeté avec une plage personnalisée plus stricte, avec le message
+    // reflétant la plage fournie plutôt que les valeurs fixes de la version par défaut.
+    expect(momentProblems({ start: 99, end: 125, proof: "Salut Kylian, tu vas bien ?" }, words)).toEqual([]);
+    expect(momentProblems({ start: 99, end: 125, proof: "Salut Kylian, tu vas bien ?" }, words, { min: 15, max: 20 })).toEqual([
+      "dure 26 s, le maximum est 20 s",
+    ]);
+  });
 });
