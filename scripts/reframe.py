@@ -22,7 +22,13 @@ Pipeline:
 
 Speech intervals ([[start, end], ...] JSON on stdin, optional) gate the active-speaker choice.
 
-Usage: uv run scripts/reframe.py VIDEO START END [--src-height PX] [--models DIR] [--fps 5] [--debug DIR] < speech.json
+--mode follow: for content with no face/facecam to anchor on (e.g. sport: see niches.ts
+"follow" crop mode). Skips face detection entirely and instead tracks the horizontal center of
+motion between successive frames (e.g. the ball/play in a football clip), smoothed through
+pan_keyframes into a single "crop" shot spanning [start, end].
+
+Usage: uv run scripts/reframe.py VIDEO START END [--src-height PX] [--models DIR] [--fps 5]
+       [--mode auto|follow] [--debug DIR] < speech.json
 """
 from __future__ import annotations
 
@@ -360,6 +366,9 @@ def main() -> None:
     ap.add_argument("--src-height", type=int, help="height of the file used at render time (upscale guard)")
     ap.add_argument("--models", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models"))
     ap.add_argument("--fps", type=float, default=5.0)
+    ap.add_argument("--mode", choices=("auto", "follow"), default="auto",
+                     help="auto: face/facecam reframing (default). follow: no face detection, "
+                          "track the horizontal center of motion instead (e.g. sport).")
     ap.add_argument("--debug")
     args = ap.parse_args()
 
@@ -369,9 +378,10 @@ def main() -> None:
         if raw:
             speech = [(float(a), float(b)) for a, b in json.loads(raw)]
 
-    for name in (YUNET, SFACE):
-        if not os.path.isfile(os.path.join(args.models, name)):
-            sys.exit(f"model {name} not found in {os.path.abspath(args.models)}. Run: pnpm setup:models")
+    if args.mode == "auto":
+        for name in (YUNET, SFACE):
+            if not os.path.isfile(os.path.join(args.models, name)):
+                sys.exit(f"model {name} not found in {os.path.abspath(args.models)}. Run: pnpm setup:models")
     cap = cv2.VideoCapture(args.video)
     if not cap.isOpened():
         sys.exit(f"cannot open {args.video}")
@@ -379,8 +389,10 @@ def main() -> None:
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     aspect = W / H
     src_h = args.src_height or H
-    detector = cv2.FaceDetectorYN.create(os.path.join(args.models, YUNET), "", (W, H), 0.75, 0.3, 20)
-    recognizer = cv2.FaceRecognizerSF.create(os.path.join(args.models, SFACE), "")
+    detector = recognizer = None
+    if args.mode == "auto":
+        detector = cv2.FaceDetectorYN.create(os.path.join(args.models, YUNET), "", (W, H), 0.75, 0.3, 20)
+        recognizer = cv2.FaceRecognizerSF.create(os.path.join(args.models, SFACE), "")
 
     # ---- 1. Decode every frame: scene cuts; analysis samples every 1/fps s and on each cut.
     # Seek a bit early: some files land after the requested time.
@@ -394,6 +406,8 @@ def main() -> None:
     before_cut: dict[int, np.ndarray] = {}  # sample index of a cut → frame right before it (320×180)
     prev_small = prev_g = None
     prev_mafd = 0.0
+    last_diff: np.ndarray | None = None  # mode "follow": frame-to-frame abs diff at 160×90, for the sample just taken
+    motion_centers: list[tuple[float, float]] = []  # mode "follow": (t, normalized x) of the activity centroid
     next_sample = args.start
     while True:
         ok, frame = cap.read()
@@ -406,9 +420,12 @@ def main() -> None:
         small = cv2.resize(g, (160, 90), interpolation=cv2.INTER_AREA)
         is_cut = False
         if prev_small is not None:
-            mafd = float(np.mean(cv2.absdiff(small, prev_small)))
+            diff_small = cv2.absdiff(small, prev_small)
+            mafd = float(np.mean(diff_small))
             score = scene_score(mafd, prev_mafd)
             prev_mafd = mafd
+            if args.mode == "follow":
+                last_diff = diff_small
             if t > args.start and accept_cut(t, score, cut_times):
                 cut_times.append(t)
                 is_cut = True
@@ -419,24 +436,50 @@ def main() -> None:
         next_sample = t + period
         i = len(times)
         times.append(t)
-        gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, faces = detector.detect(frame)
-        ds = []
-        for f in faces if faces is not None else []:
-            box = clip_box(float(f[0]), float(f[1]), float(f[2]), float(f[3]), W, H)
-            if box is None:
-                continue
-            feat = None
-            if f[2] >= 32 and f[3] >= 32:
-                e = recognizer.feature(recognizer.alignCrop(frame, f)).flatten()
-                feat = e / (np.linalg.norm(e) + 1e-9)
-            ds.append(Det(*box, score=float(f[14]), mouth=mouth_patch(gray_full, f), feat=feat))
+        if args.mode == "auto":
+            gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            _, faces = detector.detect(frame)
+            ds = []
+            for f in faces if faces is not None else []:
+                box = clip_box(float(f[0]), float(f[1]), float(f[2]), float(f[3]), W, H)
+                if box is None:
+                    continue
+                feat = None
+                if f[2] >= 32 and f[3] >= 32:
+                    e = recognizer.feature(recognizer.alignCrop(frame, f)).flatten()
+                    feat = e / (np.linalg.norm(e) + 1e-9)
+                ds.append(Det(*box, score=float(f[14]), mouth=mouth_patch(gray_full, f), feat=feat))
+        else:
+            # No face/facecam expected: track the horizontal center of inter-frame motion instead
+            # (e.g. the ball/play in a sport clip), reusing the small/prev_small grayscale levels
+            # already computed above rather than decoding or converting anything again.
+            ds = []
+            if last_diff is not None:
+                col_weight = last_diff.astype(np.float32).sum(axis=0)
+                if col_weight.sum() > 0:
+                    gw = col_weight.shape[0]
+                    xs = (np.arange(gw) + 0.5) / gw
+                    motion_centers.append((t, float(np.average(xs, weights=col_weight))))
         dets.append(ds)
         grays.append(g)
         if args.debug and (i % max(1, round(args.fps)) == 0 or is_cut):
             debug_frames[i] = frame.copy()
     if not times:
         json.dump([{"t": round(args.start, 3), "layout": "fit"}], sys.stdout)
+        return
+
+    if args.mode == "follow":
+        # A single crop shot across the whole range, panning to follow the tracked horizontal
+        # activity center; y fixed on the vertical middle and zoom at 1 (no face to frame tighter
+        # on), unless keeping the pan within the source bounds requires otherwise.
+        win = crop_window_w(aspect, 1.0)
+        lo, hi = win / 2, 1 - win / 2
+        kfs = pan_keyframes(motion_centers, 0.2 * win, lo, hi) if motion_centers else []
+        if not kfs:
+            kfs = [{"t": args.start, "x": 0.5}]
+        kfs[0]["t"] = args.start
+        shot = {"t": args.start, "layout": "crop", "keyframes": [{**k, "y": 0.5, "zoom": 1.0} for k in kfs]}
+        json.dump(sanitize([shot]), sys.stdout, allow_nan=False)
         return
     N = len(times)
     span = max(period, times[-1] - times[0] + period)
