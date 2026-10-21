@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { AbsoluteFill, Audio, Html5Video, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
+import { CaptionLayer } from "@/remotion/CaptionLayer";
 import { type Box, contentAt, cropTransform, fitTransform, keyframeAt, regionTransform, shotAt } from "@/timeline/crop";
 import type { Asset, AudioItem, TextItem, Timeline, VideoItem } from "@/timeline/schema";
 
@@ -36,22 +37,22 @@ export function ShortComposition({ timeline, media }: ShortProps) {
         if (track.hidden && track.kind !== "audio") return null;
         return track.items.map((item) => {
           const from = toFrames(item.start, fps);
-          // Captions are not rendered yet.
-          if (item.type === "caption") return null;
           const duration =
-            item.type === "text"
+            item.type === "text" || item.type === "caption"
               ? toFrames(item.duration, fps)
               : toFrames(item.sourceOut - item.sourceIn, fps);
           if (duration <= 0) return null;
-          const asset = item.type === "text" ? null : timeline.assets[item.assetId];
-          if (item.type !== "text" && !asset) return null;
+          const asset = item.type === "text" || item.type === "caption" ? null : timeline.assets[item.assetId];
+          if (item.type !== "text" && item.type !== "caption" && !asset) return null;
           return (
             <Sequence
               key={item.id}
               from={from}
               durationInFrames={duration}
-              // Premounting needs the default layout; text has nothing to preload.
-              {...(item.type === "text" ? { layout: "none" as const } : { premountFor: Math.round(PREMOUNT_SEC * fps) })}
+              // Premounting needs the default layout; text/caption have nothing to preload.
+              {...(item.type === "text" || item.type === "caption"
+                ? { layout: "none" as const }
+                : { premountFor: Math.round(PREMOUNT_SEC * fps) })}
             >
               {item.type === "video" && asset ? (
                 <VideoLayer item={item} asset={asset} timeline={timeline} media={media} muted={track.muted} />
@@ -59,6 +60,8 @@ export function ShortComposition({ timeline, media }: ShortProps) {
                 <AudioLayer item={item} asset={asset} fps={fps} media={media} muted={track.muted} />
               ) : item.type === "text" ? (
                 <TextLayer item={item} timeline={timeline} />
+              ) : item.type === "caption" ? (
+                <CaptionLayer item={item} timeline={timeline} />
               ) : null}
             </Sequence>
           );
