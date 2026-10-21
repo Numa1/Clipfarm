@@ -47,6 +47,12 @@ export const JOB_REGISTRY: Record<JobType, JobDefinition> = {
     schema: sourceIdSchema,
     dedupeKey: (p) => `transcribe:source:${p.sourceId}`,
   }),
+  niche: job({
+    lane: "light",
+    timeoutMin: 15,
+    schema: sourceIdSchema,
+    dedupeKey: (p) => `niche:source:${p.sourceId}`,
+  }),
   moments: job({
     lane: "light",
     timeoutMin: 15,

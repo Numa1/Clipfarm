@@ -97,7 +97,7 @@ export const projectRevisions = sqliteTable(
   (t) => [primaryKey({ columns: [t.projectId, t.rev] })],
 );
 
-export type JobType = "ingest" | "transcribe" | "moments" | "reframe" | "render";
+export type JobType = "ingest" | "transcribe" | "niche" | "moments" | "reframe" | "render";
 export type JobLane = "heavy" | "light";
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 

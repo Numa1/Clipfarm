@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { z } from "zod";
 import { desc, eq, like } from "drizzle-orm";
+import { isNicheId, NICHE_IDS } from "@/config/niches";
 import { HttpError, route } from "@/server/api";
 import { getDb } from "@/server/db";
 import { costSelect, toCost } from "@/server/costs";
@@ -54,16 +55,31 @@ function firstClip(timeline: unknown): { start: number; end: number } | null {
   }
 }
 
-const patchSchema = z.object({ creator: z.string().trim().max(80).nullable() });
+const patchSchema = z
+  .object({
+    creator: z.string().trim().max(80).nullable().optional(),
+    /** Correction manuelle de niche : force nicheSource à "manual" (jamais écrasée par le job "niche"). */
+    niche: z
+      .string()
+      .refine(isNicheId, { message: `niche invalide (attendu : ${NICHE_IDS.join(", ")})` })
+      .optional(),
+  })
+  .refine((b) => b.creator !== undefined || b.niche !== undefined, { message: "creator ou niche requis" });
 
-/** Edit source details (the creator's name feeds the generated titles). */
+/**
+ * Edit source details : le nom du créateur (alimente les titres générés) et/ou une correction
+ * manuelle de niche. Une niche posée ici force nicheSource = "manual" et nicheConfidence = 1 : le
+ * handler "niche" (worker/handlers/niche.ts) ne l'écrasera plus jamais automatiquement.
+ */
 export const PATCH = route({ path: "/api/sources/[id]", body: patchSchema, validationStatus: 400 }, ({ body, params: { id } }) => {
-  const row = getDb()
-    .update(sources)
-    .set({ creator: body.creator || null })
-    .where(eq(sources.id, id))
-    .returning()
-    .get();
+  const set: Partial<typeof sources.$inferInsert> = {};
+  if (body.creator !== undefined) set.creator = body.creator || null;
+  if (body.niche !== undefined) {
+    set.niche = body.niche;
+    set.nicheSource = "manual";
+    set.nicheConfidence = 1;
+  }
+  const row = getDb().update(sources).set(set).where(eq(sources.id, id)).returning().get();
   if (!row) throw new HttpError(404, "not_found", "not found");
   return Response.json(row);
 });

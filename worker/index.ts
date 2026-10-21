@@ -13,6 +13,7 @@ import {
 import { nextJobsAfter } from "@/server/pipeline";
 import { ingest } from "./handlers/ingest";
 import { findMoments } from "./handlers/moments";
+import { assignNiche } from "./handlers/niche";
 import { reframe, reframeSetupProblem } from "./handlers/reframe";
 import { render } from "./handlers/render";
 import { transcribe } from "./handlers/transcribe";
@@ -49,6 +50,7 @@ type Handler = (
 const handlers: Record<Job["type"], Handler> = {
   ingest: (p: { sourceId: string }, prog, signal) => ingest(db, p, prog, signal),
   transcribe: (p: { sourceId: string }, prog, signal) => transcribe(db, p, prog, signal),
+  niche: (p: { sourceId: string }, _prog, signal) => assignNiche(db, p, signal),
   moments: (p: { sourceId: string }, _prog, signal) => findMoments(db, p, signal),
   reframe: (p: { projectId: string; itemIds?: string[] }, prog, signal) => reframe(db, p, prog, signal),
   render: (p: { projectId: string }, prog, signal) => render(db, p, prog, signal),

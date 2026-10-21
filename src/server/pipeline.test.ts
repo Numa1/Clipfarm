@@ -23,8 +23,14 @@ describe("nextJobsAfter", () => {
     expect(claimNextJob(db, "heavy")).toMatchObject({ type: "transcribe", payload: { sourceId: "src1" } });
   });
 
-  it("enfile moments quand transcribe se termine", () => {
+  it("enfile niche quand transcribe se termine", () => {
     const enqueued = nextJobsAfter(db, "transcribe", { sourceId: "src1" }, { words: 3 });
+    expect(enqueued.map((j) => j.type)).toEqual(["niche"]);
+    expect(claimNextJob(db, "light")).toMatchObject({ type: "niche", payload: { sourceId: "src1" } });
+  });
+
+  it("enfile moments quand niche se termine", () => {
+    const enqueued = nextJobsAfter(db, "niche", { sourceId: "src1" }, { niche: "gaming" });
     expect(enqueued.map((j) => j.type)).toEqual(["moments"]);
     expect(claimNextJob(db, "light")).toMatchObject({ type: "moments", payload: { sourceId: "src1" } });
   });
