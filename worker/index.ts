@@ -11,6 +11,7 @@ import {
   setJobProgress,
 } from "@/server/jobs";
 import { nextJobsAfter } from "@/server/pipeline";
+import { generateHooks } from "./handlers/hooks";
 import { ingest } from "./handlers/ingest";
 import { findMoments } from "./handlers/moments";
 import { assignNiche } from "./handlers/niche";
@@ -53,6 +54,7 @@ const handlers: Record<Job["type"], Handler> = {
   niche: (p: { sourceId: string }, _prog, signal) => assignNiche(db, p, signal),
   moments: (p: { sourceId: string }, _prog, signal) => findMoments(db, p, signal),
   reframe: (p: { projectId: string; itemIds?: string[] }, prog, signal) => reframe(db, p, prog, signal),
+  hooks: (p: { projectId: string }, _prog, signal) => generateHooks(db, p, signal),
   render: (p: { projectId: string }, prog, signal) => render(db, p, prog, signal),
 };
 

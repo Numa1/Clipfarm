@@ -51,3 +51,19 @@ describe("onProjectCreated", () => {
     expect(claimNextJob(db, "heavy")).toMatchObject({ type: "reframe", payload: { projectId: "p1" } });
   });
 });
+
+describe("nextJobsAfter (chaîne projet)", () => {
+  it("enfile hooks quand reframe se termine (projet créé -> reframe -> hooks)", () => {
+    const enqueued = nextJobsAfter(db, "reframe", { projectId: "p1" }, { clips: 2 });
+    expect(enqueued.map((j) => j.type)).toEqual(["hooks"]);
+    expect(claimNextJob(db, "light")).toMatchObject({ type: "hooks", payload: { projectId: "p1" } });
+  });
+
+  it("n'enfile rien sans projectId dans le payload", () => {
+    expect(nextJobsAfter(db, "reframe", {}, {})).toEqual([]);
+  });
+
+  it("n'enfile rien quand hooks se termine (pas d'étape suivante pour l'instant)", () => {
+    expect(nextJobsAfter(db, "hooks", { projectId: "p1" }, {})).toEqual([]);
+  });
+});

@@ -65,6 +65,12 @@ export const JOB_REGISTRY: Record<JobType, JobDefinition> = {
     schema: reframeSchema,
     dedupeKey: (p) => `reframe:project:${p.projectId}`,
   }),
+  hooks: job({
+    lane: "light",
+    timeoutMin: 15,
+    schema: projectIdSchema,
+    dedupeKey: (p) => `hooks:project:${p.projectId}`,
+  }),
   render: job({
     lane: "heavy",
     timeoutMin: 30,
