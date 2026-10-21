@@ -34,8 +34,8 @@ export const GET = route({}, async () => {
 });
 
 const createSchema = z.union([
-  z.object({ momentId: z.string() }),
-  z.object({ sourceId: z.string(), start: z.number(), end: z.number(), hook: z.string().optional() }),
+  z.object({ momentId: z.string(), styleId: z.string().optional() }),
+  z.object({ sourceId: z.string(), start: z.number(), end: z.number(), hook: z.string().optional(), styleId: z.string().optional() }),
 ]);
 
 /** Create a project pre-cut on a suggested moment (or an arbitrary segment), then queue auto-reframe. */
