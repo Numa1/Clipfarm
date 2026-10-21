@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseDetections, transcriptLines, voiceLabels, wavSlice, type Detection } from "./voices";
+import {
+  dominantLanguage,
+  parseDetections,
+  sampleWindows,
+  transcriptLines,
+  voiceLabels,
+  wavDurationSec,
+  wavSlice,
+  type Detection,
+} from "./voices";
 
 const en = (p = 0.95): Detection => ({ lang: "en", p });
 const fr = (p = 0.95): Detection => ({ lang: "fr", p });
@@ -43,6 +52,29 @@ describe("voices", () => {
     ]);
   });
 
+  it("picks the most frequent sure detection as the dominant language", () => {
+    // Un commentaire de foot en anglais : "en" doit l'emporter sur "fr", jamais l'inverse en dur.
+    expect(dominantLanguage([en(), en(), en(0.9), fr(0.5), null], "fr")).toBe("en");
+    expect(dominantLanguage([fr(), fr(), en()], "fr")).toBe("fr");
+  });
+
+  it("falls back to the single best detection, then to the given default", () => {
+    expect(dominantLanguage([{ lang: "es", p: 0.5 }, null], "fr")).toBe("es");
+    expect(dominantLanguage([null, null], "fr")).toBe("fr");
+  });
+
+  it("spreads sample windows evenly across the audio, or takes it whole when too short", () => {
+    expect(sampleWindows(100, 5, 5)).toEqual([
+      { start: 9.5, end: 14.5 },
+      { start: 28.5, end: 33.5 },
+      { start: 47.5, end: 52.5 },
+      { start: 66.5, end: 71.5 },
+      { start: 85.5, end: 90.5 },
+    ]);
+    expect(sampleWindows(3, 5, 5)).toEqual([{ start: 0, end: 3 }]);
+    expect(sampleWindows(0, 5, 5)).toEqual([]);
+  });
+
   it("cuts a time range out of a 16-bit mono WAV", () => {
     const rate = 16000;
     const samples = rate * 2;
@@ -60,6 +92,7 @@ describe("voices", () => {
     wav.write("data", 36, "ascii");
     wav.writeUInt32LE(samples * 2, 40);
     for (let i = 0; i < samples; i++) wav.writeInt16LE(i % 30000, 44 + i * 2);
+    expect(wavDurationSec(wav)).toBe(2);
     const part = wavSlice(wav, 0.5, 1.25);
     expect(part.readUInt32LE(40)).toBe(0.75 * rate * 2);
     expect(part.length).toBe(44 + 0.75 * rate * 2);
