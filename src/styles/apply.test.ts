@@ -6,6 +6,7 @@ import { STYLE_PRESETS } from "./presets";
 
 const EPIQUE = STYLE_PRESETS.epique; // splitRatio: 0.3
 const CHILL = STYLE_PRESETS.chill; // splitRatio: 0.4
+const HUMOUR_CONDENSE = STYLE_PRESETS["humour-condense"]; // splitRatio: 0.5
 
 function baseTimeline(): Timeline {
   const tl = emptyTimeline();
@@ -68,6 +69,17 @@ describe("applyStyle", () => {
     if (autoAfter?.type !== "video" || autoAfter.crop.mode !== "auto") throw new Error("unexpected");
     expect(autoAfter.crop.shots?.[0]).toMatchObject({ layout: "split", ratio: EPIQUE.crop.splitRatio });
     expect(EPIQUE.crop.splitRatio).not.toBe(0.4); // valeur de départ du fixture, pour que le test soit probant
+  });
+
+  it("met à jour les paramètres de recadrage pour un second preset (humour condensé)", () => {
+    const tl = baseTimeline();
+    const result = applyStyle(tl, HUMOUR_CONDENSE);
+    const autoAfter = result.tracks[0].items.find((i) => i.id === "auto-clip");
+    expect(autoAfter?.type).toBe("video");
+    if (autoAfter?.type !== "video" || autoAfter.crop.mode !== "auto") throw new Error("unexpected");
+    expect(autoAfter.crop.shots?.[0]).toMatchObject({ layout: "split", ratio: HUMOUR_CONDENSE.crop.splitRatio });
+    expect(HUMOUR_CONDENSE.crop.splitRatio).not.toBe(0.4); // valeur de départ du fixture, pour que le test soit probant
+    expect(result.meta.styleId).toBe("humour-condense");
   });
 
   it("met à jour meta.styleId", () => {
