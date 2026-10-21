@@ -2,12 +2,19 @@
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 import reframe as rf  # noqa: E402
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REFRAME = os.path.join(HERE, "reframe.py")
 
 
 def det(x, y, w, h, mouth=None):
@@ -105,6 +112,48 @@ def test_two_shot_fits_only_when_both_are_inside_a_9_16_window():
     assert math.isclose(rf.crop_window_w(aspect), 0.316, abs_tol=1e-3)
     assert rf.fits_two_shot(det(0.40, 0.3, 0.08, 0.2), det(0.55, 0.3, 0.08, 0.2), aspect)
     assert not rf.fits_two_shot(det(0.10, 0.3, 0.08, 0.2), det(0.75, 0.3, 0.08, 0.2), aspect)
+
+
+@pytest.fixture(scope="module")
+def panning_video():
+    """A synthetic clip: a white square sweeping left-to-right over a black background (like the
+    ball/action moving across a football clip, with no face anywhere)."""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not installed")
+    tmp = tempfile.mkdtemp(prefix="clipfarm-reframe-follow-test-")
+    video = os.path.join(tmp, "pan.mp4")
+    duration, w, h, travel = 4.0, 320, 240, 280
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y",
+         "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:d={duration}:r=10",
+         "-f", "lavfi", "-i", f"color=c=white:s=40x40:d={duration}:r=10",
+         "-filter_complex", f"[0][1]overlay=x='{travel}*t/{duration}':y=100",
+         "-pix_fmt", "yuv420p", video],
+        check=True,
+    )
+    yield video, duration, w, travel
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_follow_mode_tracks_horizontal_motion_without_face_detection(panning_video):
+    video, duration, w, travel = panning_video
+    out = subprocess.run(
+        ["uv", "run", "--quiet", REFRAME, video, "0", str(duration), "--mode", "follow", "--fps", "5"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    shots = json.loads(out)
+    assert len(shots) == 1 and shots[0]["layout"] == "crop"
+    kfs = shots[0]["keyframes"]
+    assert len(kfs) >= 2  # the sweep is tracked, not held static
+
+    # The box center moves from 20/320 to (20+travel)/320, linearly in t. The produced x should
+    # follow the same trend: strongly (positively) correlated with the expected position.
+    expected_x = lambda t: (20 + travel * t / duration) / w  # noqa: E731
+    produced = np.interp([k["t"] for k in kfs], [k["t"] for k in kfs], [k["x"] for k in kfs])
+    expected = np.array([expected_x(t) for t in [k["t"] for k in kfs]])
+    corr = np.corrcoef(produced, expected)[0, 1]
+    assert corr > 0.9
+    assert kfs[-1]["x"] > kfs[0]["x"]  # net motion is to the right, matching the sweep
 
 
 def test_sanitize_clamps_into_schema_ranges_and_rejects_nan():
