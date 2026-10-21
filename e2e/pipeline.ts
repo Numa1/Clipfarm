@@ -1,6 +1,7 @@
 /**
  * End-to-end test of the whole pipeline on a generated video: ingest → transcribe (whisper) →
- * moments (fake Claude) → project (dead-air cuts + teaser) → reframe (OpenCV) → render (Remotion).
+ * niche (local signals + fake Claude in repli) → moments (fake Claude) → project (dead-air cuts +
+ * teaser) → reframe (OpenCV) → render (Remotion).
  * Runs in a throwaway library; needs the local toolchain (ffmpeg, whisper model, uv + models).
  * Usage: pnpm test:e2e   (KEEP=1 keeps the temporary library for inspection)
  */
@@ -44,6 +45,7 @@ function probe(file: string) {
 
 async function main() {
   const { eq } = await import("drizzle-orm");
+  const { isNicheId } = await import("@/config/niches");
   const { getDb } = await import("@/server/db");
   const { llmCalls, moments, projects, sources } = await import("@/server/db/schema");
   const { createProject } = await import("@/server/projects");
@@ -51,6 +53,7 @@ async function main() {
   const { parseTimeline } = await import("@/timeline/schema");
   const { ingest } = await import("../worker/handlers/ingest");
   const { transcribe } = await import("../worker/handlers/transcribe");
+  const { assignNiche } = await import("../worker/handlers/niche");
   const { findMoments } = await import("../worker/handlers/moments");
   const { reframe } = await import("../worker/handlers/reframe");
   const { render } = await import("../worker/handlers/render");
@@ -75,11 +78,17 @@ async function main() {
   check(words > 20, `${words} mots transcrits`);
   check(contentWords === 0, "aucune ligne attribuée au contenu : tout est la voix du créateur");
 
+  await step("Niche (signaux locaux + faux Claude en repli)", () => assignNiche(db, { sourceId }));
+  const afterNiche = db.select().from(sources).where(eq(sources.id, sourceId)).get()!;
+  check(isNicheId(afterNiche.niche ?? ""), `niche assignée : ${afterNiche.niche}`);
+  check(afterNiche.nicheSource === "auto" || afterNiche.nicheSource === "llm", `nicheSource = ${afterNiche.nicheSource}`);
+  check(typeof afterNiche.nicheConfidence === "number" && afterNiche.nicheConfidence! >= 0 && afterNiche.nicheConfidence! <= 1, "confiance de niche entre 0 et 1");
+
   await step("Moments (faux Claude)", () => findMoments(db, { sourceId }));
   const [moment] = db.select().from(moments).where(eq(moments.sourceId, sourceId)).all();
   check(moment?.title && moment.teaserStart != null, "un moment avec titre et teaser");
-  const calls = db.select().from(llmCalls).where(eq(llmCalls.sourceId, sourceId)).all();
-  check(calls.length === 1 && calls[0].costUsd > 0 && calls[0].outputTokens > 0, "tokens et coût de l'appel enregistrés");
+  const momentsCalls = db.select().from(llmCalls).where(eq(llmCalls.sourceId, sourceId)).all().filter((c) => c.purpose === "moments");
+  check(momentsCalls.length === 1 && momentsCalls[0].costUsd > 0 && momentsCalls[0].outputTokens > 0, "tokens et coût de l'appel moments enregistrés");
 
   const created = await step("Projet", () => createProject(db, { momentId: moment.id }));
   if ("error" in created) throw new Error(created.error);

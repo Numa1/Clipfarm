@@ -14,13 +14,14 @@ import { enqueueJob } from "./jobs";
  * Chaîne d'un job terminé vers les jobs suivants à enfiler pour la même source. Partiel : un type de
  * job qui ne déclenche rien (comme "moments" aujourd'hui) n'a pas d'entrée.
  *
- * La vague 4 ajoutera la "niche" entre "transcribe" et "moments" (par ex. transcribe: ["niche"],
- * niche: ["moments"]) : cette table est volontairement une simple liste par type plutôt qu'une chaîne
- * figée, pour permettre d'insérer une étape sans toucher aux autres entrées.
+ * Vague 4 : "niche" s'insère entre "transcribe" et "moments" (transcribe -> niche -> moments) ; cette
+ * table est volontairement une simple liste par type plutôt qu'une chaîne figée, pour permettre
+ * d'insérer une étape sans toucher aux autres entrées.
  */
 const SOURCE_PIPELINE: Partial<Record<JobType, JobType[]>> = {
   ingest: ["transcribe"],
-  transcribe: ["moments"],
+  transcribe: ["niche"],
+  niche: ["moments"],
 };
 
 /**

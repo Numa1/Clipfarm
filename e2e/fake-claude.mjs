@@ -1,9 +1,29 @@
 #!/usr/bin/env node
 // Stand-in for the Claude CLI in the end-to-end test: deterministic, offline, no subscription used.
-// Reads the moments prompt on stdin and answers like `claude -p --output-format json --json-schema`.
+// Reads the moments or niche prompt on stdin and answers like `claude -p --output-format json --json-schema`.
+// The two prompts share this one CLI stand-in (src/server/llm.ts has a single CLAUDE_BIN): told apart
+// by a marker unique to src/prompts/niche.ts's system prompt, passed on argv (--system-prompt).
+const isNichePrompt = process.argv.some((a) => a.includes("Niches possibles"));
+
 let input = "";
 process.stdin.on("data", (d) => (input += d));
 process.stdin.on("end", () => {
+  if (isNichePrompt) {
+    // Deterministic, plausible-looking answer: the e2e video (a test pattern + narration, no
+    // facecam/green screen) is ambiguous for the local scorer, so this is what "Claude" decides.
+    process.stdout.write(
+      JSON.stringify({
+        type: "result",
+        is_error: false,
+        duration_ms: 400,
+        total_cost_usd: 0.0021,
+        usage: { input_tokens: 8, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        modelUsage: { "fake-claude": { inputTokens: 8, outputTokens: 20, costUSD: 0.0021 } },
+        structured_output: { niche: "podcast", confidence: 0.75, reason: "Narration continue, pas de facecam ni de terrain détecté." },
+      }),
+    );
+    return;
+  }
   const lines = [...input.matchAll(/^\[(\d+(?:\.\d+)?)\] (?:\[VO\] )?(.+)$/gm)].map((m) => ({ t: Number(m[1]), text: m[2] }));
   if (lines.length < 2) {
     process.stdout.write(JSON.stringify({ type: "result", is_error: true, result: "fake-claude: transcript too short" }));
