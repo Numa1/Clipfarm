@@ -1,7 +1,7 @@
 /**
  * End-to-end test of the whole pipeline on a generated video: ingest → transcribe (whisper) →
  * niche (local signals + fake Claude in repli) → moments (fake Claude) → project (dead-air cuts +
- * teaser) → reframe (OpenCV) → render (Remotion).
+ * teaser) → reframe (OpenCV) → hooks (candidats locaux + fake Claude) → render (Remotion).
  * Runs in a throwaway library; needs the local toolchain (ffmpeg, whisper model, uv + models).
  * Usage: pnpm test:e2e   (KEEP=1 keeps the temporary library for inspection)
  */
@@ -56,6 +56,7 @@ async function main() {
   const { assignNiche } = await import("../worker/handlers/niche");
   const { findMoments } = await import("../worker/handlers/moments");
   const { reframe } = await import("../worker/handlers/reframe");
+  const { generateHooks } = await import("../worker/handlers/hooks");
   const { render } = await import("../worker/handlers/render");
   const db = getDb();
   const sourceId = "e2esource";
@@ -104,6 +105,15 @@ async function main() {
   await step("Recadrage (OpenCV)", () => reframe(db, { projectId }, noop));
   timeline = parseTimeline(db.select().from(projects).where(eq(projects.id, projectId)).get()!.timeline);
   check(clips().every((c) => c.crop.mode === "auto" && c.crop.shots?.length), "chaque clip a ses plans");
+
+  await step("Accroches (candidats locaux + faux Claude)", () => generateHooks(db, { projectId }));
+  const afterHooks = db.select().from(projects).where(eq(projects.id, projectId)).get()!;
+  timeline = parseTimeline(afterHooks.timeline);
+  const hooks = timeline.meta.hooks ?? [];
+  check(hooks.length >= 3 && hooks.length <= 5, `${hooks.length} variantes d'accroche`);
+  check(hooks.filter((h) => h.kind === "retenue").length === 1, "une accroche retenue parmi les variantes");
+  const hooksCalls = db.select().from(llmCalls).where(eq(llmCalls.projectId, projectId)).all().filter((c) => c.purpose === "hooks");
+  check(hooksCalls.length === 1 && hooksCalls[0].costUsd > 0, "coût de l'appel hooks attribué au projet");
 
   const { output } = await step("Rendu (Remotion)", () => render(db, { projectId }, noop));
   const file = resolveInLibrary(output)!;
