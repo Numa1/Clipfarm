@@ -122,6 +122,95 @@ export function wavSlice(wav: Buffer, start: number, end: number): Buffer {
   throw new Error("not a PCM WAV file");
 }
 
+/** Duration in seconds of a 16-bit PCM WAV file, read from its `fmt `/`data` chunks. */
+export function wavDurationSec(wav: Buffer): number {
+  let pos = 12;
+  let rate: number | null = null;
+  while (pos + 8 <= wav.length) {
+    const id = wav.toString("ascii", pos, pos + 4);
+    const size = wav.readUInt32LE(pos + 4);
+    if (id === "fmt ") rate = wav.readUInt32LE(pos + 12);
+    if (id === "data" && rate) {
+      const dataEnd = Math.min(wav.length, pos + 8 + size);
+      const samples = (dataEnd - (pos + 8)) / 2; // 16-bit mono LID samples
+      return samples / rate;
+    }
+    pos += 8 + size + (size % 2);
+  }
+  throw new Error("not a PCM WAV file");
+}
+
+/**
+ * A handful of short windows spread evenly across the audio, to sample its dominant language without
+ * running LID on the whole file. Skips entirely when the audio is too short for even one full window.
+ */
+export function sampleWindows(durationSec: number, count = 5, windowSec = 5): { start: number; end: number }[] {
+  if (durationSec < windowSec) return durationSec > 0 ? [{ start: 0, end: durationSec }] : [];
+  const windows: { start: number; end: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const start = ((i + 0.5) / count) * (durationSec - windowSec);
+    windows.push({ start, end: start + windowSec });
+  }
+  return windows;
+}
+
+/**
+ * The dominant language among a set of detections: the most frequent language reaching SURE confidence,
+ * then the single most confident detection, then `fallback` when nothing was detected at all (missing
+ * model, silence-only samples…).
+ */
+export function dominantLanguage(dets: Detection[], fallback: string): string {
+  const counts = new Map<string, number>();
+  for (const d of dets) if (d && d.p >= SURE) counts.set(d.lang, (counts.get(d.lang) ?? 0) + 1);
+  const [topLang] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? [null];
+  if (topLang) return topLang;
+  const best = dets.filter((d): d is NonNullable<Detection> => !!d).sort((a, b) => b.p - a.p)[0];
+  return best?.lang ?? fallback;
+}
+
+/**
+ * Main spoken language of the whole source, detected on a handful of short samples spread across the
+ * audio with the same small LID model used to tell voices apart (see `detectLanguages`). Needed before
+ * transcription, since whisper must be told the source language up front (it otherwise auto-detects on
+ * the first seconds only, and translates everything else to that language instead of transcribing it).
+ * Falls back to `fallback` ("fr" by default) when the model is missing or nothing was confidently detected.
+ */
+export async function detectSourceLanguage(
+  audioPath: string,
+  opts: { signal?: AbortSignal; fallback?: string } = {},
+): Promise<string> {
+  const fallback = opts.fallback ?? "fr";
+  if (!fs.existsSync(LID_MODEL)) {
+    console.warn(`Language model missing at ${LID_MODEL} (pnpm setup:whisper): defaulting source language to ${fallback}.`);
+    return fallback;
+  }
+  const wav = fs.readFileSync(audioPath);
+  const windows = sampleWindows(wavDurationSec(wav));
+  if (!windows.length) return fallback;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clipfarm-srclang-"));
+  try {
+    const files = windows.map((w, i) => {
+      const file = path.join(dir, `${String(i).padStart(5, "0")}.wav`);
+      fs.writeFileSync(file, wavSlice(wav, w.start, w.end));
+      return file;
+    });
+    let log = "";
+    await run(WHISPER_BIN, ["-m", LID_MODEL, "-dl", ...files.flatMap((f) => ["-f", f])], {
+      signal: opts.signal,
+      onStderr: (line) => {
+        log += `${line}\n`;
+      },
+    });
+    const found = parseDetections(log);
+    return dominantLanguage(
+      files.map((f) => found.get(f) ?? null),
+      fallback,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Spoken language of each line (null when too short or undetected), in one whisper run on a small model. */
 export async function detectLanguages(
   audioPath: string,
