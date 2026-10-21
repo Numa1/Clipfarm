@@ -66,3 +66,42 @@ export const momentsPrompt = {
   system: SYSTEM,
   build,
 };
+
+/**
+ * Segment de SYSTEM qui fixe la plage de durée ciblée ; la version 2 le réécrit avec la plage
+ * demandée au lieu des valeurs fixes "20 à 45 secondes".
+ */
+const DURATION_SEGMENT = "20 à 45 secondes (end − start ≤ 45,";
+
+/** Point d'insertion de la consigne de niche, juste après le préambule générique. */
+const NICHE_ANCHOR = "PAS le créateur.\n\n";
+
+export type MomentsPromptV2SystemArgs = {
+  /** Consigne courte sur le type de contenu (texte de `niches.ts`, lu par l'appelant) ; omise si la niche est inconnue. */
+  nicheHint?: string;
+  /** Plage de durée [min, max] en secondes à utiliser dans le texte du prompt, à la place de 20–45. */
+  durationRange?: [number, number];
+};
+
+/** Construit le prompt système de la version 2 : celui de la version 1, avec niche et plage de durée. */
+function systemV2({ nicheHint, durationRange = [20, 45] }: MomentsPromptV2SystemArgs = {}): string {
+  const [min, max] = durationRange;
+  let system = SYSTEM.replace(DURATION_SEGMENT, `${min} à ${max} secondes (end − start ≤ ${max},`);
+  if (nicheHint) {
+    system = system.replace(NICHE_ANCHOR, `${NICHE_ANCHOR}Contexte sur le type de contenu : ${nicheHint}\n\n`);
+  }
+  return system;
+}
+
+/**
+ * Version 2 : reprend le système et le prompt utilisateur de la version 1, mais accepte en plus une
+ * consigne de niche et une plage de durée personnalisable (voir `systemV2`). Le prompt utilisateur
+ * (titre, créateur, transcription) est inchangé : seul le système varie selon ces paramètres, donc
+ * "system" est ici une fonction et non une chaîne fixe.
+ */
+export const momentsPrompt2 = {
+  id: "moments",
+  version: "2",
+  system: systemV2,
+  build,
+};
